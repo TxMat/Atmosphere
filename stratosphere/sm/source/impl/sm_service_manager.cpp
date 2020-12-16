@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "sm_service_manager.hpp"
 
 namespace ams::sm::impl {
@@ -349,6 +350,12 @@ namespace ams::sm::impl {
             return service == ServiceName::Encode("fsp-srv");
         }
 
+        bool ShouldCloseOnClientDisconnect(ServiceName service) {
+            /* jit sysmodule is closed and relaunched by am for each application which uses it. */
+            constexpr auto JitU = ServiceName::Encode("jit:u");
+            return service == JitU;
+        }
+
         Result GetMitmServiceHandleImpl(Handle *out, ServiceInfo *service_info, const MitmProcessInfo &client_info) {
             /* Send command to query if we should mitm. */
             bool should_mitm;
@@ -417,6 +424,28 @@ namespace ams::sm::impl {
             free_service->is_light = is_light;
 
             return ResultSuccess();
+        }
+
+    }
+
+    /* Client disconnection callback. */
+    void OnClientDisconnected(os::ProcessId process_id) {
+        /* Ensure that the process id is valid. */
+        if (process_id == os::InvalidProcessId) {
+            return;
+        }
+
+        /* NOTE: Nintendo unregisters all services a process hosted on client close. */
+        /* We do not do this as an atmosphere extension, in order to reduce the number */
+        /* of sessions open at any given time. */
+        /* However, certain system behavior (jit) relies on this occurring. */
+        /* As such, we will special case the system components which rely on the behavior. */
+        for (size_t i = 0; i < ServiceCountMax; i++) {
+            if (g_service_list[i].name != InvalidServiceName && g_service_list[i].owner_process_id == process_id) {
+                if (ShouldCloseOnClientDisconnect(g_service_list[i].name)) {
+                    g_service_list[i].Free();
+                }
+            }
         }
     }
 
@@ -587,11 +616,19 @@ namespace ams::sm::impl {
         *out = INVALID_HANDLE;
         *out_query = INVALID_HANDLE;
 
+        /* If we don't have a future mitm declaration, add one. */
+        /* Client will clear this when ready to process. */
+        bool has_existing_future_declaration = HasFutureMitmDeclaration(service);
+        if (!has_existing_future_declaration) {
+            R_TRY(AddFutureMitmDeclaration(service));
+        }
+
+        auto future_guard = SCOPE_GUARD { if (!has_existing_future_declaration) { ClearFutureMitmDeclaration(service); } };
+
         /* Create mitm handles. */
         {
             os::ManagedHandle hnd, port_hnd, qry_hnd, mitm_qry_hnd;
-            u64 x = 0;
-            R_TRY(svcCreatePort(hnd.GetPointer(), port_hnd.GetPointer(), service_info->max_sessions, service_info->is_light, reinterpret_cast<char *>(&x)));
+            R_TRY(svcCreatePort(hnd.GetPointer(), port_hnd.GetPointer(), service_info->max_sessions, service_info->is_light, service_info->name.name));
             R_TRY(svcCreateSession(qry_hnd.GetPointer(), mitm_qry_hnd.GetPointer(), 0, 0));
 
             /* Copy to output. */
@@ -602,9 +639,7 @@ namespace ams::sm::impl {
             *out_query = qry_hnd.Move();
         }
 
-        /* Clear the future declaration, if one exists. */
-        ClearFutureMitmDeclaration(service);
-
+        future_guard.Cancel();
         return ResultSuccess();
     }
 
@@ -647,6 +682,34 @@ namespace ams::sm::impl {
 
         /* Try to forward declare it. */
         R_TRY(AddFutureMitmDeclaration(service));
+        return ResultSuccess();
+    }
+
+    Result ClearFutureMitm(os::ProcessId process_id, ServiceName service) {
+        /* Validate service name. */
+        R_TRY(ValidateServiceName(service));
+
+        /* Check that the process is registered and allowed to register the service. */
+        if (!IsInitialProcess(process_id)) {
+            ProcessInfo *proc = GetProcessInfo(process_id);
+            R_UNLESS(proc != nullptr, sm::ResultInvalidClient());
+            R_TRY(ValidateAccessControl(AccessControlEntry(proc->access_control, proc->access_control_size), service, true, false));
+        }
+
+        /* Check that a future mitm declaration is present or we have a mitm. */
+        if (HasMitm(service)) {
+            /* Validate that the service exists. */
+            ServiceInfo *service_info = GetServiceInfo(service);
+            R_UNLESS(service_info != nullptr, sm::ResultNotRegistered());
+
+            /* Validate that the client process_id is the mitm process. */
+            R_UNLESS(service_info->mitm_process_id == process_id, sm::ResultNotAllowed());
+        } else {
+            R_UNLESS(HasFutureMitmDeclaration(service), sm::ResultNotRegistered());
+        }
+
+        /* Clear the forward declaration. */
+        ClearFutureMitmDeclaration(service);
         return ResultSuccess();
     }
 

@@ -28,6 +28,7 @@ namespace ams::kern {
                 constexpr KSchedulerInterruptTask() : KInterruptTask() { /* ... */ }
 
                 virtual KInterruptTask *OnInterrupt(s32 interrupt_id) override {
+                    MESOSPHERE_UNUSED(interrupt_id);
                     return GetDummyInterruptTask();
                 }
 
@@ -65,6 +66,9 @@ namespace ams::kern {
 
         /* Bind interrupt handler. */
         Kernel::GetInterruptManager().BindHandler(GetSchedulerInterruptTask(), KInterruptName_Scheduler, this->core_id, KInterruptController::PriorityLevel_Scheduler, false, false);
+
+        /* Set the current thread. */
+        this->current_thread = GetCurrentThreadPointer();
     }
 
     void KScheduler::Activate() {
@@ -90,11 +94,15 @@ namespace ams::kern {
             }
             if (this->state.should_count_idle) {
                 if (AMS_LIKELY(highest_thread != nullptr)) {
-                    /* TODO: Set parent process's idle count if it exists. */
+                    if (KProcess *process = highest_thread->GetOwnerProcess(); process != nullptr) {
+                        process->SetRunningThread(this->core_id, highest_thread, this->state.idle_count);
+                    }
                 } else {
                     this->state.idle_count++;
                 }
             }
+
+            MESOSPHERE_KTRACE_SCHEDULE_UPDATE(this->core_id, (prev_highest_thread != nullptr ? prev_highest_thread : this->idle_thread), (highest_thread != nullptr ? highest_thread : this->idle_thread));
 
             this->state.highest_priority_thread = highest_thread;
             this->state.needs_scheduling = true;
@@ -118,13 +126,13 @@ namespace ams::kern {
         for (size_t core_id = 0; core_id < cpu::NumCores; core_id++) {
             KThread *top_thread = priority_queue.GetScheduledFront(core_id);
             if (top_thread != nullptr) {
-                /* If the thread has no waiters, we need to check if the process has a thread pinned by PreemptionState. */
+                /* If the thread has no waiters, we need to check if the process has a thread pinned. */
                 if (top_thread->GetNumKernelWaiters() == 0) {
                     if (KProcess *parent = top_thread->GetOwnerProcess(); parent != nullptr) {
-                        if (KThread *suggested = parent->GetPreemptionStatePinnedThread(core_id); suggested != nullptr && suggested != top_thread) {
-                            /* We prefer our parent's pinned thread possible. However, we also don't want to schedule un-runnable threads. */
-                            if (suggested->GetRawState() == KThread::ThreadState_Runnable) {
-                                top_thread = suggested;
+                        if (KThread *pinned = parent->GetPinnedThread(core_id); pinned != nullptr && pinned != top_thread) {
+                            /* We prefer our parent's pinned thread if possible. However, we also don't want to schedule un-runnable threads. */
+                            if (pinned->GetRawState() == KThread::ThreadState_Runnable) {
+                                top_thread = pinned;
                             } else {
                                 top_thread = nullptr;
                             }
@@ -160,6 +168,7 @@ namespace ams::kern {
                         /* The suggested thread isn't bound to its core, so we can migrate it! */
                         suggested->SetActiveCore(core_id);
                         priority_queue.ChangeCore(suggested_core, suggested);
+                        MESOSPHERE_KTRACE_CORE_MIGRATION(suggested->GetId(), suggested_core, core_id, 1);
                         top_threads[core_id] = suggested;
                         cores_needing_scheduling |= Kernel::GetScheduler(core_id).UpdateHighestPriorityThread(top_threads[core_id]);
                         break;
@@ -185,6 +194,7 @@ namespace ams::kern {
                             /* Perform the migration. */
                             suggested->SetActiveCore(core_id);
                             priority_queue.ChangeCore(candidate_core, suggested);
+                            MESOSPHERE_KTRACE_CORE_MIGRATION(suggested->GetId(), candidate_core, core_id, 2);
                             top_threads[core_id] = suggested;
                             cores_needing_scheduling |= Kernel::GetScheduler(core_id).UpdateHighestPriorityThread(top_threads[core_id]);
                             break;
@@ -199,7 +209,7 @@ namespace ams::kern {
         return cores_needing_scheduling;
     }
 
-    void KScheduler::SetInterruptTaskThreadRunnable() {
+    void KScheduler::InterruptTaskThreadToRunnable() {
         MESOSPHERE_ASSERT(GetCurrentThread().GetDisableDispatchCount() == 1);
 
         KThread *task_thread = Kernel::GetInterruptTaskManager().GetThread();
@@ -232,7 +242,7 @@ namespace ams::kern {
         const s64 prev_tick = this->last_context_switch_time;
         const s64 cur_tick  = KHardwareTimer::GetTick();
         const s64 tick_diff = cur_tick - prev_tick;
-        cur_thread->AddCpuTime(tick_diff);
+        cur_thread->AddCpuTime(this->core_id, tick_diff);
         if (cur_process != nullptr) {
             cur_process->AddCpuTime(tick_diff);
         }
@@ -250,6 +260,12 @@ namespace ams::kern {
             this->prev_thread = nullptr;
         }
 
+        MESOSPHERE_KTRACE_THREAD_SWITCH(next_thread);
+
+        if (next_thread->GetCurrentCore() != this->core_id) {
+            next_thread->SetCurrentCore(this->core_id);
+        }
+
         /* Switch the current process, if we're switching processes. */
         if (KProcess *next_process = next_thread->GetOwnerProcess(); next_process != cur_process) {
             KProcess::Switch(cur_process, next_process);
@@ -257,9 +273,23 @@ namespace ams::kern {
 
         /* Set the new thread. */
         SetCurrentThread(next_thread);
+        this->current_thread = next_thread;
 
         /* Set the new Thread Local region. */
         cpu::SwitchThreadLocalRegion(GetInteger(next_thread->GetThreadLocalRegionAddress()));
+    }
+
+    void KScheduler::ClearPreviousThread(KThread *thread) {
+        MESOSPHERE_ASSERT(IsSchedulerLockedByCurrentThread());
+        for (size_t i = 0; i < cpu::NumCores; ++i) {
+            /* Get an atomic reference to the core scheduler's previous thread. */
+            std::atomic_ref<KThread *> prev_thread(Kernel::GetScheduler(static_cast<s32>(i)).prev_thread);
+            static_assert(std::atomic_ref<KThread *>::is_always_lock_free);
+
+            /* Atomically clear the previous thread if it's our target. */
+            KThread *compare = thread;
+            prev_thread.compare_exchange_strong(compare, nullptr);
+        }
     }
 
     void KScheduler::OnThreadStateChanged(KThread *thread, KThread::ThreadState old_state) {
@@ -391,5 +421,190 @@ namespace ams::kern {
         SetSchedulerUpdateNeeded();
     }
 
+    void KScheduler::YieldWithoutCoreMigration() {
+        /* Validate preconditions. */
+        MESOSPHERE_ASSERT(CanSchedule());
+        MESOSPHERE_ASSERT(GetCurrentProcessPointer() != nullptr);
+
+        /* Get the current thread and process. */
+        KThread &cur_thread   = GetCurrentThread();
+        KProcess &cur_process = GetCurrentProcess();
+
+        /* If the thread's yield count matches, there's nothing for us to do. */
+        if (cur_thread.GetYieldScheduleCount() == cur_process.GetScheduledCount()) {
+            return;
+        }
+
+        /* Get a reference to the priority queue. */
+        auto &priority_queue = GetPriorityQueue();
+
+        /* Perform the yield. */
+        {
+            KScopedSchedulerLock sl;
+
+            const auto cur_state = cur_thread.GetRawState();
+            if (cur_state == KThread::ThreadState_Runnable) {
+                /* Put the current thread at the back of the queue. */
+                KThread *next_thread = priority_queue.MoveToScheduledBack(std::addressof(cur_thread));
+                IncrementScheduledCount(std::addressof(cur_thread));
+
+                /* If the next thread is different, we have an update to perform. */
+                if (next_thread != std::addressof(cur_thread)) {
+                    SetSchedulerUpdateNeeded();
+                } else {
+                    /* Otherwise, set the thread's yield count so that we won't waste work until the process is scheduled again. */
+                    cur_thread.SetYieldScheduleCount(cur_process.GetScheduledCount());
+                }
+            }
+        }
+    }
+
+    void KScheduler::YieldWithCoreMigration() {
+        /* Validate preconditions. */
+        MESOSPHERE_ASSERT(CanSchedule());
+        MESOSPHERE_ASSERT(GetCurrentProcessPointer() != nullptr);
+
+        /* Get the current thread and process. */
+        KThread &cur_thread   = GetCurrentThread();
+        KProcess &cur_process = GetCurrentProcess();
+
+        /* If the thread's yield count matches, there's nothing for us to do. */
+        if (cur_thread.GetYieldScheduleCount() == cur_process.GetScheduledCount()) {
+            return;
+        }
+
+        /* Get a reference to the priority queue. */
+        auto &priority_queue = GetPriorityQueue();
+
+        /* Perform the yield. */
+        {
+            KScopedSchedulerLock sl;
+
+            const auto cur_state = cur_thread.GetRawState();
+            if (cur_state == KThread::ThreadState_Runnable) {
+                /* Get the current active core. */
+                const s32 core_id = cur_thread.GetActiveCore();
+
+                /* Put the current thread at the back of the queue. */
+                KThread *next_thread = priority_queue.MoveToScheduledBack(std::addressof(cur_thread));
+                IncrementScheduledCount(std::addressof(cur_thread));
+
+                /* While we have a suggested thread, try to migrate it! */
+                bool recheck = false;
+                KThread *suggested = priority_queue.GetSuggestedFront(core_id);
+                while (suggested != nullptr) {
+                    /* Check if the suggested thread is the thread running on its core. */
+                    const s32 suggested_core = suggested->GetActiveCore();
+
+                    if (KThread *running_on_suggested_core = (suggested_core >= 0) ? Kernel::GetScheduler(suggested_core).state.highest_priority_thread : nullptr; running_on_suggested_core != suggested) {
+                        /* If the current thread's priority is higher than our suggestion's we prefer the next thread to the suggestion. */
+                        /* We also prefer the next thread when the current thread's priority is equal to the suggestions, but the next thread has been waiting longer. */
+                        if ((suggested->GetPriority() > cur_thread.GetPriority()) ||
+                            (suggested->GetPriority() == cur_thread.GetPriority() && next_thread != std::addressof(cur_thread) && next_thread->GetLastScheduledTick() < suggested->GetLastScheduledTick()))
+                        {
+                            suggested = nullptr;
+                            break;
+                        }
+
+                        /* If we're allowed to do a migration, do one. */
+                        /* NOTE: Unlike migrations in UpdateHighestPriorityThread, this moves the suggestion to the front of the queue. */
+                        if (running_on_suggested_core == nullptr || running_on_suggested_core->GetPriority() >= HighestCoreMigrationAllowedPriority) {
+                            suggested->SetActiveCore(core_id);
+                            priority_queue.ChangeCore(suggested_core, suggested, true);
+                            MESOSPHERE_KTRACE_CORE_MIGRATION(suggested->GetId(), suggested_core, core_id, 3);
+                            IncrementScheduledCount(suggested);
+                            break;
+                        } else {
+                            /* We couldn't perform a migration, but we should check again on a future yield. */
+                            recheck = true;
+                        }
+                    }
+
+                    /* Get the next suggestion. */
+                    suggested = priority_queue.GetSuggestedNext(core_id, suggested);
+                }
+
+
+                /* If we still have a suggestion or the next thread is different, we have an update to perform. */
+                if (suggested != nullptr || next_thread != std::addressof(cur_thread)) {
+                    SetSchedulerUpdateNeeded();
+                } else if (!recheck) {
+                    /* Otherwise if we don't need to re-check, set the thread's yield count so that we won't waste work until the process is scheduled again. */
+                    cur_thread.SetYieldScheduleCount(cur_process.GetScheduledCount());
+                }
+            }
+        }
+    }
+
+    void KScheduler::YieldToAnyThread() {
+        /* Validate preconditions. */
+        MESOSPHERE_ASSERT(CanSchedule());
+        MESOSPHERE_ASSERT(GetCurrentProcessPointer() != nullptr);
+
+        /* Get the current thread and process. */
+        KThread &cur_thread   = GetCurrentThread();
+        KProcess &cur_process = GetCurrentProcess();
+
+        /* If the thread's yield count matches, there's nothing for us to do. */
+        if (cur_thread.GetYieldScheduleCount() == cur_process.GetScheduledCount()) {
+            return;
+        }
+
+        /* Get a reference to the priority queue. */
+        auto &priority_queue = GetPriorityQueue();
+
+        /* Perform the yield. */
+        {
+            KScopedSchedulerLock sl;
+
+            const auto cur_state = cur_thread.GetRawState();
+            if (cur_state == KThread::ThreadState_Runnable) {
+                /* Get the current active core. */
+                const s32 core_id = cur_thread.GetActiveCore();
+
+                /* Migrate the current thread to core -1. */
+                cur_thread.SetActiveCore(-1);
+                priority_queue.ChangeCore(core_id, std::addressof(cur_thread));
+                MESOSPHERE_KTRACE_CORE_MIGRATION(cur_thread.GetId(), core_id, -1, 4);
+                IncrementScheduledCount(std::addressof(cur_thread));
+
+                /* If there's nothing scheduled, we can try to perform a migration. */
+                if (priority_queue.GetScheduledFront(core_id) == nullptr) {
+                    /* While we have a suggested thread, try to migrate it! */
+                    KThread *suggested = priority_queue.GetSuggestedFront(core_id);
+                    while (suggested != nullptr) {
+                        /* Check if the suggested thread is the top thread on its core. */
+                        const s32 suggested_core = suggested->GetActiveCore();
+                        if (KThread *top_on_suggested_core = (suggested_core >= 0) ? priority_queue.GetScheduledFront(suggested_core) : nullptr; top_on_suggested_core != suggested) {
+                            /* If we're allowed to do a migration, do one. */
+                            if (top_on_suggested_core == nullptr || top_on_suggested_core->GetPriority() >= HighestCoreMigrationAllowedPriority) {
+                                suggested->SetActiveCore(core_id);
+                                priority_queue.ChangeCore(suggested_core, suggested);
+                                MESOSPHERE_KTRACE_CORE_MIGRATION(suggested->GetId(), suggested_core, core_id, 5);
+                                IncrementScheduledCount(suggested);
+                            }
+
+                            /* Regardless of whether we migrated, we had a candidate, so we're done. */
+                            break;
+                        }
+
+                        /* Get the next suggestion. */
+                        suggested = priority_queue.GetSuggestedNext(core_id, suggested);
+                    }
+
+                    /* If the suggestion is different from the current thread, we need to perform an update. */
+                    if (suggested != std::addressof(cur_thread)) {
+                        SetSchedulerUpdateNeeded();
+                    } else {
+                        /* Otherwise, set the thread's yield count so that we won't waste work until the process is scheduled again. */
+                        cur_thread.SetYieldScheduleCount(cur_process.GetScheduledCount());
+                    }
+                } else {
+                    /* Otherwise, we have an update to perform. */
+                    SetSchedulerUpdateNeeded();
+                }
+            }
+        }
+    }
 
 }

@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "../amsmitm_initialization.hpp"
 #include "bpc_ams_module.hpp"
 #include "bpc_ams_service.hpp"
@@ -36,7 +37,7 @@ namespace ams::mitm::bpc_ams {
         {
             Handle bpcams_h;
             R_ABORT_UNLESS(svcManageNamedPort(&bpcams_h, AtmosphereServiceName.name, AtmosphereMaxSessions));
-            g_server_manager.RegisterServer<bpc::AtmosphereService>(bpcams_h);
+            g_server_manager.RegisterServer<bpc::impl::IAtmosphereInterface, bpc::AtmosphereService>(bpcams_h);
         }
 
         /* Loop forever, servicing our services. */

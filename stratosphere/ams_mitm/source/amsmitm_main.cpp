@@ -13,9 +13,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "amsmitm_initialization.hpp"
 #include "amsmitm_module_management.hpp"
 #include "bpc_mitm/bpc_ams_power_utils.hpp"
+#include "sysupdater/sysupdater_fs_utils.hpp"
 
 extern "C" {
     extern u32 __start__;
@@ -80,15 +82,26 @@ void __appInit(void) {
         R_ABORT_UNLESS(fsInitialize());
         R_ABORT_UNLESS(pmdmntInitialize());
         R_ABORT_UNLESS(pminfoInitialize());
-        R_ABORT_UNLESS(splFsInitialize());
+        ncm::Initialize();
+        spl::InitializeForFs();
     });
+
+    /* Disable auto-abort in fs operations. */
+    fs::SetEnabledAutoAbort(false);
+
+    /* Initialize fssystem library. */
+    fssystem::InitializeForFileSystemProxy();
+
+    /* Configure ncm to use fssystem library to mount content from the sd card. */
+    ncm::SetMountContentMetaFunction(mitm::sysupdater::MountSdCardContentMeta);
 
     ams::CheckApiVersion();
 }
 
 void __appExit(void) {
     /* Cleanup services. */
-    splFsExit();
+    spl::Finalize();
+    ncm::Finalize();
     pminfoExit();
     pmdmntExit();
     fsExit();

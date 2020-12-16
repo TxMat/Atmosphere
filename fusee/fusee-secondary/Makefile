@@ -87,9 +87,9 @@ export TOPDIR	:=	$(CURDIR)
 export KIPDIRS	:= $(AMS)/stratosphere/loader $(AMS)/stratosphere/ncm $(AMS)/stratosphere/pm $(AMS)/stratosphere/sm $(AMS)/stratosphere/boot $(AMS)/stratosphere/spl $(AMS)/stratosphere/ams_mitm
 export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
 			$(foreach dir,$(DATA),$(CURDIR)/$(dir)) \
-			$(AMS)/exosphere $(AMS)/exosphere/lp0fw $(AMS)/exosphere/rebootstub \
+			$(AMS)/exosphere $(AMS)/exosphere/warmboot $(AMS)/exosphere/program/rebootstub \
 			$(AMS)/thermosphere $(AMS)/fusee/fusee-primary $(AMS)/sept/sept-primary \
-			$(AMS)/sept/sept-secondary $(AMS)/emummc $(AMS)/mesosphere/kernel_ldr $(KIPDIRS)
+			$(AMS)/sept/sept-secondary $(AMS)/emummc $(AMS)/mesosphere $(AMS)/mesosphere/kernel_ldr $(KIPDIRS)
 
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
@@ -98,9 +98,10 @@ CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 KIPFILES 	:=	loader.kip ncm.kip pm.kip sm.kip ams_mitm.kip spl.kip boot.kip
 BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*))) fusee-primary.bin \
-				exosphere.bin lp0fw.bin rebootstub.bin thermosphere.bin splash_screen.bmp \
+				exosphere.bin warmboot.bin rebootstub.bin thermosphere.bin splash_screen.bmp \
 				sept-primary.bin sept-secondary_00.enc sept-secondary_01.enc emummc.kip \
-				sept-secondary_dev_00.enc sept-secondary_dev_01.enc kernel_ldr.bin $(KIPFILES)
+				sept-secondary_dev_00.enc sept-secondary_dev_01.enc mesosphere.bin kernel_ldr.bin \
+                mariko_fatal.bin $(KIPFILES)
 
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
@@ -186,11 +187,15 @@ DEPENDS	:=	$(OFILES:.o=.d)
 #---------------------------------------------------------------------------------
 all	:	$(OUTPUT).bin
 
-$(OUTPUT).bin	:	$(OUTPUT).elf
+$(OUTPUT).bin	:	$(OUTPUT)-experimental.bin
+	@python $(TOPDIR)/fusee_make_standard.py $(OUTPUT)-experimental.bin $(OUTPUT).bin
+	@echo built ... $(notdir $@)
+
+$(OUTPUT)-experimental.bin	:	$(OUTPUT)-experimental.elf
 	$(OBJCOPY) -S -O binary $< $@
 	@echo built ... $(notdir $@)
 
-$(OUTPUT).elf	:	$(OFILES)
+$(OUTPUT)-experimental.elf	:	$(OFILES)
 
 %.elf: $(OFILES)
 	@echo linking $(notdir $@)

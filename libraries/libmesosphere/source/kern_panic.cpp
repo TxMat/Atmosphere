@@ -27,6 +27,11 @@ namespace ams::result::impl {
 
 namespace ams::kern {
 
+    /* NOTE: This is not exposed via a header, but is referenced via assembly. */
+    /* NOTE: Nintendo does not save register contents on panic; we use this */
+    /*       to generate an atmosphere fatal report on panic. */
+    constinit KExceptionContext g_panic_exception_contexts[cpu::NumCores];
+
     namespace {
 
         constexpr std::array<s32, cpu::NumCores> NegativeArray = [] {
@@ -73,24 +78,39 @@ namespace ams::kern {
             } while (!g_current_ticket.compare_exchange_weak(compare, desired));
         }
 
+        ALWAYS_INLINE KExceptionContext *GetPanicExceptionContext(int core_id) {
+            #if defined(MESOSPHERE_ENABLE_PANIC_REGISTER_DUMP)
+                return std::addressof(g_panic_exception_contexts[core_id]);
+            #else
+                return nullptr;
+            #endif
+        }
+
         [[gnu::unused]] void PrintCurrentState() {
             /* Wait for it to be our turn to print. */
             WaitCoreTicket();
 
-            const s32 core_id = GetCurrentCoreId();
+            /* Get the current exception context. */
+            const s32 core_id    = GetCurrentCoreId();
+            const auto *core_ctx = GetPanicExceptionContext(core_id);
+
+            /* Print the state. */
             MESOSPHERE_RELEASE_LOG("Core[%d] Current State:\n", core_id);
 
-            /* TODO: Dump register state. */
+            /* Print registers and user backtrace. */
+            KDebug::PrintRegister();
+            KDebug::PrintBacktrace();
 
             #ifdef ATMOSPHERE_ARCH_ARM64
-                MESOSPHERE_RELEASE_LOG("    Backtrace:\n");
-                uintptr_t fp = reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
+                /* Print kernel backtrace. */
+                MESOSPHERE_RELEASE_LOG("Backtrace:\n");
+                uintptr_t fp = core_ctx != nullptr ? core_ctx->x[29] : reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
                 for (size_t i = 0; i < 32 && fp && util::IsAligned(fp, 0x10) && cpu::GetPhysicalAddressWritable(nullptr, fp, true); i++) {
                     struct {
                         uintptr_t fp;
                         uintptr_t lr;
                     } *stack_frame = reinterpret_cast<decltype(stack_frame)>(fp);
-                    MESOSPHERE_RELEASE_LOG("        [%02zx]: %p\n", i, reinterpret_cast<void *>(stack_frame->lr));
+                    MESOSPHERE_RELEASE_LOG("   [%02zx]: %p\n", i, reinterpret_cast<void *>(stack_frame->lr));
                     fp = stack_frame->fp;
                 }
             #endif
@@ -107,12 +127,12 @@ namespace ams::kern {
                 PrintCurrentState();
             #endif
 
-            KSystemControl::StopSystem();
+            KSystemControl::StopSystem(GetPanicExceptionContext(GetCurrentCoreId()));
         }
 
     }
 
-    NORETURN WEAK_SYMBOL void Panic(const char *file, int line, const char *format, ...) {
+    NORETURN WEAK_SYMBOL void PanicImpl(const char *file, int line, const char *format, ...) {
         #ifdef MESOSPHERE_BUILD_FOR_DEBUGGING
             /* Wait for it to be our turn to print. */
             WaitCoreTicket();
@@ -120,15 +140,20 @@ namespace ams::kern {
             ::std::va_list vl;
             va_start(vl, format);
             MESOSPHERE_RELEASE_LOG("Core[%d]: Kernel Panic at %s:%d\n", GetCurrentCoreId(), file, line);
+            if (KProcess *cur_process = GetCurrentProcessPointer(); cur_process != nullptr) {
+                MESOSPHERE_RELEASE_LOG("Core[%d]: Current Process: %s\n", GetCurrentCoreId(), cur_process->GetName());
+            }
             MESOSPHERE_RELEASE_VLOG(format, vl);
             MESOSPHERE_RELEASE_LOG("\n");
             va_end(vl);
+        #else
+            MESOSPHERE_UNUSED(file, line, format);
         #endif
 
         StopSystem();
     }
 
-    NORETURN WEAK_SYMBOL void Panic() {
+    NORETURN WEAK_SYMBOL void PanicImpl() {
         StopSystem();
     }
 

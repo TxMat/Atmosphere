@@ -31,11 +31,11 @@ namespace ams::kern {
             template<typename U>
             constexpr ALWAYS_INLINE explicit KTypedAddress(U *ptr) : address(reinterpret_cast<uintptr_t>(ptr)) { /* ... */ }
 
+            /* Copy constructor. */
+            constexpr ALWAYS_INLINE KTypedAddress(const KTypedAddress &rhs) = default;
+
             /* Assignment operator. */
-            constexpr ALWAYS_INLINE KTypedAddress operator=(KTypedAddress rhs) {
-                this->address = rhs.address;
-                return *this;
-            }
+            constexpr ALWAYS_INLINE KTypedAddress &operator=(const KTypedAddress &rhs) = default;
 
             /* Arithmetic operators. */
             template<typename I>
@@ -124,8 +124,6 @@ namespace ams::kern {
                 return this->address != rhs;
             }
 
-            /* TODO: <, <=, >, >= against uintptr_t? would need to be declared outside of class. Maybe worth it. */
-
             /* Allow getting the address explicitly, for use in accessors. */
             constexpr ALWAYS_INLINE uintptr_t GetValue() const {
                 return this->address;
@@ -183,6 +181,9 @@ namespace ams::kern {
 #endif
 
     template<typename T>
+    concept IsKTypedAddress = std::same_as<T, KPhysicalAddress> || std::same_as<T, KVirtualAddress> || std::same_as<T, KProcessAddress>;
+
+    template<typename T>
     constexpr inline T Null = [] {
         if constexpr (std::is_same<T, uintptr_t>::value) {
             return 0;
@@ -199,6 +200,26 @@ namespace ams::kern {
     static_assert(sizeof(KVirtualAddress)  == sizeof(uintptr_t));
     static_assert(sizeof(KProcessAddress)  == sizeof(uintptr_t));
 
+    static_assert(std::is_trivially_copyable<KPhysicalAddress>::value);
+    static_assert(std::is_trivially_copyable<KVirtualAddress>::value);
+    static_assert(std::is_trivially_copyable<KProcessAddress>::value);
+
+    static_assert(std::is_trivially_copy_constructible<KPhysicalAddress>::value);
+    static_assert(std::is_trivially_copy_constructible<KVirtualAddress>::value);
+    static_assert(std::is_trivially_copy_constructible<KProcessAddress>::value);
+
+    static_assert(std::is_trivially_move_constructible<KPhysicalAddress>::value);
+    static_assert(std::is_trivially_move_constructible<KVirtualAddress>::value);
+    static_assert(std::is_trivially_move_constructible<KProcessAddress>::value);
+
+    static_assert(std::is_trivially_copy_assignable<KPhysicalAddress>::value);
+    static_assert(std::is_trivially_copy_assignable<KVirtualAddress>::value);
+    static_assert(std::is_trivially_copy_assignable<KProcessAddress>::value);
+
+    static_assert(std::is_trivially_move_assignable<KPhysicalAddress>::value);
+    static_assert(std::is_trivially_move_assignable<KVirtualAddress>::value);
+    static_assert(std::is_trivially_move_assignable<KProcessAddress>::value);
+
     static_assert(std::is_trivially_destructible<KPhysicalAddress>::value);
     static_assert(std::is_trivially_destructible<KVirtualAddress>::value);
     static_assert(std::is_trivially_destructible<KProcessAddress>::value);
@@ -207,6 +228,10 @@ namespace ams::kern {
     static_assert(Null<KPhysicalAddress> == Null<uintptr_t>);
     static_assert(Null<KVirtualAddress>  == Null<uintptr_t>);
     static_assert(Null<KProcessAddress>  == Null<uintptr_t>);
+
+    /* Constructor/assignment validations. */
+    static_assert([]{ const KPhysicalAddress a(5); KPhysicalAddress b(a); return b; }() == KPhysicalAddress(5));
+    static_assert([]{ const KPhysicalAddress a(5); KPhysicalAddress b(10); b = a; return b; }() == KPhysicalAddress(5));
 
     /* Arithmetic validations. */
     static_assert(KPhysicalAddress(10) + 5 == KPhysicalAddress(15));
@@ -244,6 +269,5 @@ namespace ams::kern {
     /* Accessors. */
     static_assert(15 == GetInteger(KPhysicalAddress(15)));
     static_assert(0  == GetInteger(Null<KPhysicalAddress>));
-    /* TODO: reinterpret_cast<> not valid in a constant expression, can't test get pointers. */
 
 }

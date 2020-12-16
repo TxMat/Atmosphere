@@ -13,13 +13,14 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "spl_api_impl.hpp"
 #include "spl_manu_service.hpp"
 
 namespace ams::spl {
 
-    Result ManuService::ReEncryptRsaPrivateKey(const sf::OutPointerBuffer &out, const sf::InPointerBuffer &src, AccessKey access_key_dec, KeySource source_dec, AccessKey access_key_enc, KeySource source_enc, u32 option) {
-        return impl::ReEncryptRsaPrivateKey(out.GetPointer(), out.GetSize(), src.GetPointer(), src.GetSize(), access_key_dec, source_dec, access_key_enc, source_enc, option);
+    Result ManuService::ReencryptDeviceUniqueData(const sf::OutPointerBuffer &out, const sf::InPointerBuffer &src, AccessKey access_key_dec, KeySource source_dec, AccessKey access_key_enc, KeySource source_enc, u32 option) {
+        return impl::ReencryptDeviceUniqueData(out.GetPointer(), out.GetSize(), src.GetPointer(), src.GetSize(), access_key_dec, source_dec, access_key_enc, source_enc, option);
     }
 
 }

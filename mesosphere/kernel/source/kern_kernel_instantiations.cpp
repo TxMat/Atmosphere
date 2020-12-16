@@ -18,22 +18,25 @@
 namespace ams::kern {
 
     /* Declare kernel data members in kernel TU. */
-    Kernel::State           Kernel::s_state = Kernel::State::Invalid;
-    KResourceLimit          Kernel::s_system_resource_limit;
-    KMemoryManager          Kernel::s_memory_manager;
-    KPageTableManager       Kernel::s_page_table_manager;
-    KMemoryBlockSlabManager Kernel::s_app_memory_block_manager;
-    KMemoryBlockSlabManager Kernel::s_sys_memory_block_manager;
-    KBlockInfoManager       Kernel::s_block_info_manager;
-    KSupervisorPageTable    Kernel::s_supervisor_page_table;
-    KSynchronization        Kernel::s_synchronization;
-    KUnsafeMemory           Kernel::s_unsafe_memory;
-    KWorkerTaskManager      Kernel::s_worker_task_managers[KWorkerTaskManager::WorkerType_Count];
+    constinit Kernel::State           Kernel::s_state = Kernel::State::Invalid;
+    constinit KResourceLimit          Kernel::s_system_resource_limit;
+              KMemoryManager          Kernel::s_memory_manager;
+    constinit KPageTableManager       Kernel::s_page_table_manager;
+    constinit KMemoryBlockSlabManager Kernel::s_app_memory_block_manager;
+    constinit KMemoryBlockSlabManager Kernel::s_sys_memory_block_manager;
+    constinit KBlockInfoManager       Kernel::s_block_info_manager;
+    constinit KSupervisorPageTable    Kernel::s_supervisor_page_table;
+    constinit KUnsafeMemory           Kernel::s_unsafe_memory;
+    constinit KWorkerTaskManager      Kernel::s_worker_task_managers[KWorkerTaskManager::WorkerType_Count];
+    constinit KInterruptManager       Kernel::s_interrupt_manager;
+    constinit KScheduler              Kernel::s_schedulers[cpu::NumCores];
+    constinit KInterruptTaskManager   Kernel::s_interrupt_task_managers[cpu::NumCores];
+    constinit KHardwareTimer          Kernel::s_hardware_timers[cpu::NumCores];
 
     namespace {
 
-        /* TODO: C++20 constinit */ std::array<KThread, cpu::NumCores> g_main_threads;
-        /* TODO: C++20 constinit */ std::array<KThread, cpu::NumCores> g_idle_threads;
+        constinit std::array<KThread, cpu::NumCores> g_main_threads;
+        constinit std::array<KThread, cpu::NumCores> g_idle_threads;
     }
 
     KThread &Kernel::GetMainThread(s32 core_id) { return g_main_threads[core_id]; }

@@ -25,9 +25,11 @@
 #include <cstring>
 #include <climits>
 #include <cctype>
+#include <cinttypes>
 
 /* C++ headers. */
 #include <type_traits>
+#include <concepts>
 #include <algorithm>
 #include <iterator>
 #include <limits>
@@ -38,6 +40,8 @@
 #include <functional>
 #include <tuple>
 #include <array>
+#include <bit>
+#include <span>
 
 /* Stratosphere wants additional libstdc++ headers, others do not. */
 #ifdef ATMOSPHERE_IS_STRATOSPHERE

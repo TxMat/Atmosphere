@@ -30,6 +30,7 @@ namespace ams::kern::board::nintendo::nx {
                     static size_t GetApplicationPoolSize();
                     static size_t GetAppletPoolSize();
                     static size_t GetMinimumNonSecureSystemPoolSize();
+                    static u8 GetDebugLogUartPort();
 
                     /* Randomness. */
                     static void GenerateRandomBytes(void *dst, size_t size);
@@ -39,7 +40,7 @@ namespace ams::kern::board::nintendo::nx {
             /* Initialization. */
             static NOINLINE void InitializePhase1();
             static NOINLINE void InitializePhase2();
-            static NOINLINE u32 GetInitialProcessBinaryPool();
+            static NOINLINE u32 GetCreateProcessMemoryPool();
 
             /* Randomness. */
             static void GenerateRandomBytes(void *dst, size_t size);
@@ -48,7 +49,7 @@ namespace ams::kern::board::nintendo::nx {
 
             /* Privileged Access. */
             static void ReadWriteRegisterPrivileged(u32 *out, ams::svc::PhysicalAddress address, u32 mask, u32 value);
-            static void ReadWriteRegister(u32 *out, ams::svc::PhysicalAddress address, u32 mask, u32 value);
+            static Result ReadWriteRegister(u32 *out, ams::svc::PhysicalAddress address, u32 mask, u32 value);
 
             static ALWAYS_INLINE u32 ReadRegisterPrivileged(ams::svc::PhysicalAddress address) {
                 u32 v;
@@ -63,10 +64,15 @@ namespace ams::kern::board::nintendo::nx {
 
             /* Power management. */
             static void SleepSystem();
-            static NORETURN void StopSystem();
+            static NORETURN void StopSystem(void *arg = nullptr);
 
             /* User access. */
             static void CallSecureMonitorFromUser(ams::svc::lp64::SecureMonitorArguments *args);
+
+            /* Secure Memory. */
+            static size_t CalculateRequiredSecureMemorySize(size_t size, u32 pool);
+            static Result AllocateSecureMemory(KVirtualAddress *out, size_t size, u32 pool);
+            static void FreeSecureMemory(KVirtualAddress address, size_t size, u32 pool);
     };
 
 }

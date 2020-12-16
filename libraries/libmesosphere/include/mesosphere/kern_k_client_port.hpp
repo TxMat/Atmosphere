@@ -20,6 +20,10 @@
 namespace ams::kern {
 
     class KPort;
+    class KSession;
+    class KClientSession;
+    class KLightSession;
+    class KLightClientSession;
 
     class KClientPort final : public KSynchronizationObject {
         MESOSPHERE_AUTOOBJECT_TRAITS(KClientPort, KSynchronizationObject);
@@ -33,8 +37,14 @@ namespace ams::kern {
             virtual ~KClientPort() { /* ... */ }
 
             void Initialize(KPort *parent, s32 max_sessions);
+            void OnSessionFinalized();
+            void OnServerClosed();
 
             constexpr const KPort *GetParent() const { return this->parent; }
+
+            ALWAYS_INLINE s32 GetNumSessions()  const { return this->num_sessions; }
+            ALWAYS_INLINE s32 GetPeakSessions() const { return this->peak_sessions; }
+            ALWAYS_INLINE s32 GetMaxSessions()  const { return this->max_sessions; }
 
             bool IsLight() const;
 
@@ -42,7 +52,8 @@ namespace ams::kern {
             virtual void Destroy() override;
             virtual bool IsSignaled() const override;
 
-            /* TODO: More of KClientPort. */
+            Result CreateSession(KClientSession **out);
+            Result CreateLightSession(KLightClientSession **out);
     };
 
 }

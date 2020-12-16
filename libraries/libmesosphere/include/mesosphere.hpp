@@ -27,6 +27,9 @@
 #include <mesosphere/kern_initial_process.hpp>
 #include <mesosphere/kern_k_exception_context.hpp>
 
+/* Tracing functionality. */
+#include <mesosphere/kern_k_trace.hpp>
+
 /* Core pre-initialization includes. */
 #include <mesosphere/kern_select_cpu.hpp>
 #include <mesosphere/kern_select_system_control.hpp>
@@ -45,13 +48,13 @@
 #include <mesosphere/kern_k_spin_lock.hpp>
 #include <mesosphere/kern_k_memory_manager.hpp>
 #include <mesosphere/kern_k_interrupt_task_manager.hpp>
-#include <mesosphere/kern_k_core_local_region.hpp>
 #include <mesosphere/kern_k_slab_heap.hpp>
 #include <mesosphere/kern_k_light_lock.hpp>
 #include <mesosphere/kern_k_dpc_manager.hpp>
 #include <mesosphere/kern_kernel.hpp>
 #include <mesosphere/kern_k_page_table_manager.hpp>
 #include <mesosphere/kern_select_page_table.hpp>
+#include <mesosphere/kern_k_dump_object.hpp>
 
 /* Miscellaneous objects. */
 #include <mesosphere/kern_k_shared_memory_info.hpp>
@@ -75,7 +78,8 @@
 #include <mesosphere/kern_select_debug.hpp>
 #include <mesosphere/kern_k_process.hpp>
 #include <mesosphere/kern_k_resource_limit.hpp>
-#include <mesosphere/kern_k_synchronization.hpp>
+#include <mesosphere/kern_k_alpha.hpp>
+#include <mesosphere/kern_k_beta.hpp>
 
 /* More Miscellaneous objects. */
 #include <mesosphere/kern_k_object_name.hpp>

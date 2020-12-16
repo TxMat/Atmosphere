@@ -30,6 +30,9 @@ _start:
 
 .word (_metadata - _start)
 
+_is_experimental:
+.word 0x00000001 /* is experimental */
+
 _crt0:
     /* Switch to system mode, mask all interrupts, clear all flags */
     msr cpsr_cxsf, #0xDF
@@ -68,6 +71,14 @@ _crt0:
     ldr r1, [r1]
     b   main
 
+.arm
+.global fusee_is_experimental
+.type   fusee_is_experimental, %function
+fusee_is_experimental:
+    ldr r0, =_is_experimental
+    ldr r0, [r0]
+    bx lr
+
 /* Fusee-secondary header. */
 .align 5
 _metadata:
@@ -96,6 +107,7 @@ _metadata:
 #define CONTENT_TYPE_EMC 8
 #define CONTENT_TYPE_KLD 9
 #define CONTENT_TYPE_KRN 10
+#define CONTENT_TYPE_EXF 11
 
 #define CONTENT_FLAG_NONE          (0 << 0)
 
@@ -135,6 +147,17 @@ _content_headers:
 .asciz "exosphere"
 .align 5
 
+/* mesosphere content header */
+.word __mesosphere_bin_start__
+.word __mesosphere_bin_size__
+.byte CONTENT_TYPE_KRN
+.byte CONTENT_FLAG_NONE
+.byte CONTENT_FLAG_NONE
+.byte CONTENT_FLAG_NONE
+.word 0xCCCCCCCC
+.asciz "mesosphere"
+.align 5
+
 /* fusee_primary content header */
 .word __fusee_primary_bin_start__
 .word __fusee_primary_bin_size__
@@ -157,15 +180,15 @@ _content_headers:
 .asciz "Loader"
 .align 5
 
-/* lp0fw content header */
-.word __lp0fw_bin_start__
-.word __lp0fw_bin_size__
+/* warmboot content header */
+.word __warmboot_bin_start__
+.word __warmboot_bin_size__
 .byte CONTENT_TYPE_WBT
 .byte CONTENT_FLAG_NONE
 .byte CONTENT_FLAG_NONE
 .byte CONTENT_FLAG_NONE
 .word 0xCCCCCCCC
-.asciz "lp0fw"
+.asciz "warmboot"
 .align 5
 
 /* pm content header */
@@ -249,7 +272,7 @@ _content_headers:
 .word __ncm_kip_start__
 .word __ncm_kip_size__
 .byte CONTENT_TYPE_KIP
-.byte CONTENT_FLAG0_EXPERIMENTAL
+.byte CONTENT_FLAG_NONE
 .byte CONTENT_FLAG_NONE
 .byte CONTENT_FLAG_NONE
 .word 0xCCCCCCCC
@@ -267,16 +290,17 @@ _content_headers:
 .asciz "emummc"
 .align 5
 
-/* kernel_ldr content header */
-.word __kernel_ldr_bin_start__
-.word __kernel_ldr_bin_size__
-.byte CONTENT_TYPE_KLD
+/* exosphere mariko fatal program content header */
+.word __mariko_fatal_bin_start__
+.word __mariko_fatal_bin_size__
+.byte CONTENT_TYPE_EXF
 .byte CONTENT_FLAG_NONE
 .byte CONTENT_FLAG_NONE
 .byte CONTENT_FLAG_NONE
 .word 0xCCCCCCCC
-.asciz "kernel_ldr"
+.asciz "exosphere_fatal"
 .align 5
+
 
 /* splash_screen content header */
 .word __splash_screen_bmp_start__

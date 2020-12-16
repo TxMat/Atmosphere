@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "fatal_config.hpp"
 #include "fatal_debug.hpp"
 #include "fatal_service.hpp"
@@ -132,15 +133,15 @@ namespace ams::fatal::srv {
         return g_context.ThrowFatalWithPolicy(result, os::GetCurrentProcessId(), FatalPolicy_ErrorScreen);
     }
 
-    Result UserService::ThrowFatal(Result result, const sf::ClientProcessId &client_pid) {
+    Result Service::ThrowFatal(Result result, const sf::ClientProcessId &client_pid) {
         return g_context.ThrowFatal(result, client_pid.GetValue());
     }
 
-    Result UserService::ThrowFatalWithPolicy(Result result, const sf::ClientProcessId &client_pid, FatalPolicy policy) {
+    Result Service::ThrowFatalWithPolicy(Result result, const sf::ClientProcessId &client_pid, FatalPolicy policy) {
         return g_context.ThrowFatalWithPolicy(result, client_pid.GetValue(), policy);
     }
 
-    Result UserService::ThrowFatalWithCpuContext(Result result, const sf::ClientProcessId &client_pid, FatalPolicy policy, const CpuContext &cpu_ctx) {
+    Result Service::ThrowFatalWithCpuContext(Result result, const sf::ClientProcessId &client_pid, FatalPolicy policy, const CpuContext &cpu_ctx) {
         return g_context.ThrowFatalWithCpuContext(result, client_pid.GetValue(), policy, cpu_ctx);
     }
 

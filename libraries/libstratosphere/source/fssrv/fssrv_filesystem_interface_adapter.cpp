@@ -216,7 +216,7 @@ namespace ams::fssrv::impl {
         R_UNLESS(old_normalizer.GetPath() != nullptr, old_normalizer.GetResult());
         R_UNLESS(new_normalizer.GetPath() != nullptr, new_normalizer.GetResult());
 
-        const bool is_subpath = fssystem::PathTool::IsSubPath(old_normalizer.GetPath(), new_normalizer.GetPath());
+        const bool is_subpath = fs::IsSubPath(old_normalizer.GetPath(), new_normalizer.GetPath());
         R_UNLESS(!is_subpath, fs::ResultDirectoryNotRenamable());
 
         return this->base_fs->RenameFile(old_normalizer.GetPath(), new_normalizer.GetPath());
@@ -232,7 +232,7 @@ namespace ams::fssrv::impl {
         return this->base_fs->GetEntryType(reinterpret_cast<fs::DirectoryEntryType *>(out.GetPointer()), normalizer.GetPath());
     }
 
-    Result FileSystemInterfaceAdapter::OpenFile(ams::sf::Out<std::shared_ptr<FileInterfaceAdapter>> out, const fssrv::sf::Path &path, u32 mode) {
+    Result FileSystemInterfaceAdapter::OpenFile(ams::sf::Out<std::shared_ptr<fssrv::sf::IFile>> out, const fssrv::sf::Path &path, u32 mode) {
         auto read_lock = this->AcquireCacheInvalidationReadLock();
 
         std::unique_lock<fssystem::SemaphoreAdapter> open_count_semaphore;
@@ -254,14 +254,14 @@ namespace ams::fssrv::impl {
         /* TODO: N creates an nn::fssystem::AsynchronousAccessFile here. */
 
         std::shared_ptr<FileSystemInterfaceAdapter> shared_this = this->shared_from_this();
-        std::shared_ptr<FileInterfaceAdapter> file_intf = std::make_shared<FileInterfaceAdapter>(std::move(file), std::move(shared_this), std::move(open_count_semaphore));
+        auto file_intf = ams::sf::MakeShared<fssrv::sf::IFile, FileInterfaceAdapter>(std::move(file), std::move(shared_this), std::move(open_count_semaphore));
         R_UNLESS(file_intf != nullptr, fs::ResultAllocationFailureInFileSystemInterfaceAdapter());
 
         out.SetValue(std::move(file_intf), target_object_id);
         return ResultSuccess();
     }
 
-    Result FileSystemInterfaceAdapter::OpenDirectory(ams::sf::Out<std::shared_ptr<DirectoryInterfaceAdapter>> out, const fssrv::sf::Path &path, u32 mode) {
+    Result FileSystemInterfaceAdapter::OpenDirectory(ams::sf::Out<std::shared_ptr<fssrv::sf::IDirectory>> out, const fssrv::sf::Path &path, u32 mode) {
         auto read_lock = this->AcquireCacheInvalidationReadLock();
 
         std::unique_lock<fssystem::SemaphoreAdapter> open_count_semaphore;
@@ -281,7 +281,7 @@ namespace ams::fssrv::impl {
         const auto target_object_id = dir->GetDomainObjectId();
 
         std::shared_ptr<FileSystemInterfaceAdapter> shared_this = this->shared_from_this();
-        std::shared_ptr<DirectoryInterfaceAdapter> dir_intf = std::make_shared<DirectoryInterfaceAdapter>(std::move(dir), std::move(shared_this), std::move(open_count_semaphore));
+        auto dir_intf = ams::sf::MakeShared<fssrv::sf::IDirectory, DirectoryInterfaceAdapter>(std::move(dir), std::move(shared_this), std::move(open_count_semaphore));
         R_UNLESS(dir_intf != nullptr, fs::ResultAllocationFailureInFileSystemInterfaceAdapter());
 
         out.SetValue(std::move(dir_intf), target_object_id);

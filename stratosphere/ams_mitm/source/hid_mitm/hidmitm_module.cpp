@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "../amsmitm_initialization.hpp"
 #include "hidmitm_module.hpp"
 #include "hid_mitm_service.hpp"
@@ -58,7 +59,7 @@ namespace ams::mitm::hid {
         }
 
         /* Create hid mitm. */
-        R_ABORT_UNLESS(g_server_manager.RegisterMitmServer<HidMitmService>(MitmServiceName));
+        R_ABORT_UNLESS((g_server_manager.RegisterMitmServer<IHidMitmInterface, HidMitmService>(MitmServiceName)));
 
         /* Loop forever, servicing our services. */
         g_server_manager.LoopProcess();

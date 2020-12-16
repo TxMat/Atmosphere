@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "fsmitm_module.hpp"
 #include "fs_mitm_service.hpp"
 
@@ -77,7 +78,7 @@ namespace ams::mitm::fs {
 
     void MitmModule::ThreadFunction(void *arg) {
         /* Create fs mitm. */
-        R_ABORT_UNLESS(g_server_manager.RegisterMitmServer<FsMitmService>(MitmServiceName));
+        R_ABORT_UNLESS((g_server_manager.RegisterMitmServer<IFsMitmInterface, FsMitmService>(MitmServiceName)));
 
         /* Process for the server. */
         ProcessForServerOnAllThreads();

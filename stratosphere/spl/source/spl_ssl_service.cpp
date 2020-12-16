@@ -13,17 +13,18 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "spl_api_impl.hpp"
 #include "spl_ssl_service.hpp"
 
 namespace ams::spl {
 
-    Result SslService::ImportSslKey(const sf::InPointerBuffer &src, AccessKey access_key, KeySource key_source) {
-        return impl::ImportSslKey(src.GetPointer(), src.GetSize(), access_key, key_source);
+    Result SslService::DecryptAndStoreSslClientCertKey(const sf::InPointerBuffer &src, AccessKey access_key, KeySource key_source) {
+        return impl::DecryptAndStoreSslClientCertKey(src.GetPointer(), src.GetSize(), access_key, key_source);
     }
 
-    Result SslService::SslExpMod(const sf::OutPointerBuffer &out, const sf::InPointerBuffer &base, const sf::InPointerBuffer &mod) {
-        return impl::SslExpMod(out.GetPointer(), out.GetSize(), base.GetPointer(), base.GetSize(), mod.GetPointer(), mod.GetSize());
+    Result SslService::ModularExponentiateWithSslClientCertKey(const sf::OutPointerBuffer &out, const sf::InPointerBuffer &base, const sf::InPointerBuffer &mod) {
+        return impl::ModularExponentiateWithSslClientCertKey(out.GetPointer(), out.GetSize(), base.GetPointer(), base.GetSize(), mod.GetPointer(), mod.GetSize());
     }
 
 }

@@ -34,11 +34,14 @@ namespace ams::kern {
                 this->parent = parent;
             }
 
-            static void PostDestroy(uintptr_t arg) { /* ... */ }
+            virtual void Destroy() override;
+            static void PostDestroy(uintptr_t arg) { MESOSPHERE_UNUSED(arg); /* ... */ }
 
             constexpr const KLightSession *GetParent() const { return this->parent; }
 
-            /* TODO: More of KLightClientSession. */
+            Result SendSyncRequest(u32 *data);
+
+            void OnServerClosed();
     };
 
 }

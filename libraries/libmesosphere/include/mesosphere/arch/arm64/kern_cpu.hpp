@@ -59,9 +59,8 @@ namespace ams::kern::arch::arm64::cpu {
         InstructionMemoryBarrier();
     }
 
-    ALWAYS_INLINE void InvalidateEntireInstructionCache() {
-        __asm__ __volatile__("ic iallu" ::: "memory");
-        EnsureInstructionConsistency();
+    ALWAYS_INLINE void Yield() {
+        __asm__ __volatile__("yield" ::: "memory");
     }
 
     ALWAYS_INLINE void SwitchProcess(u64 ttbr, u32 proc_id) {
@@ -149,6 +148,25 @@ namespace ams::kern::arch::arm64::cpu {
         return true;
     }
 
+    ALWAYS_INLINE bool CanAccessAtomic(KProcessAddress addr, bool privileged = false) {
+        const uintptr_t va = GetInteger(addr);
+
+        if (privileged) {
+            __asm__ __volatile__("at s1e1w, %[va]" :: [va]"r"(va) : "memory");
+        } else {
+            __asm__ __volatile__("at s1e0w, %[va]" :: [va]"r"(va) : "memory");
+        }
+        InstructionMemoryBarrier();
+
+        u64 par = GetParEl1();
+
+        if (par & 0x1) {
+            return false;
+        }
+
+        return (par >> (BITSIZEOF(par) - BITSIZEOF(u8))) == 0xFF;
+    }
+
     /* Synchronization helpers. */
     NOINLINE void SynchronizeAllCores();
 
@@ -156,6 +174,7 @@ namespace ams::kern::arch::arm64::cpu {
     void ClearPageToZeroImpl(void *);
     void FlushEntireDataCacheSharedForInit();
     void FlushEntireDataCacheLocalForInit();
+    void InvalidateEntireInstructionCacheForInit();
     void StoreEntireCacheForInit();
 
     void FlushEntireDataCache();
@@ -165,6 +184,8 @@ namespace ams::kern::arch::arm64::cpu {
     Result FlushDataCache(const void *addr, size_t size);
     Result InvalidateInstructionCache(void *addr, size_t size);
 
+    void InvalidateEntireInstructionCache();
+
     ALWAYS_INLINE void ClearPageToZero(void *page) {
         MESOSPHERE_ASSERT(util::IsAligned(reinterpret_cast<uintptr_t>(page), PageSize));
         MESOSPHERE_ASSERT(page != nullptr);
@@ -173,7 +194,7 @@ namespace ams::kern::arch::arm64::cpu {
 
     ALWAYS_INLINE void InvalidateTlbByAsid(u32 asid) {
         const u64 value = (static_cast<u64>(asid) << 48);
-        __asm__ __volatile__("tlbi aside1is, %[value]" :: [value]"r"(static_cast<u64>(value) << 48) : "memory");
+        __asm__ __volatile__("tlbi aside1is, %[value]" :: [value]"r"(value) : "memory");
         EnsureInstructionConsistency();
     }
 
@@ -199,16 +220,19 @@ namespace ams::kern::arch::arm64::cpu {
         DataSynchronizationBarrier();
     }
 
-    ALWAYS_INLINE uintptr_t GetCoreLocalRegionAddress() {
+    ALWAYS_INLINE uintptr_t GetCurrentThreadPointerValue() {
         register uintptr_t x18 asm("x18");
         __asm__ __volatile__("" : [x18]"=r"(x18));
         return x18;
     }
 
-    ALWAYS_INLINE void SetCoreLocalRegionAddress(uintptr_t value) {
+    ALWAYS_INLINE void SetCurrentThreadPointerValue(uintptr_t value) {
         register uintptr_t x18 asm("x18") = value;
         __asm__ __volatile__("":: [x18]"r"(x18));
-        SetTpidrEl1(value);
+    }
+
+    ALWAYS_INLINE void SetExceptionThreadStackTop(uintptr_t top) {
+        SetTpidrEl1(top);
     }
 
     ALWAYS_INLINE void SwitchThreadLocalRegion(uintptr_t tlr) {

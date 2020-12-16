@@ -24,6 +24,7 @@
 #include "nxboot.h"
 #include "nxfs.h"
 #include "bct.h"
+#include "car.h"
 #include "di.h"
 #include "mc.h"
 #include "se.h"
@@ -54,17 +55,20 @@
 #define u8 uint8_t
 #define u32 uint32_t
 #include "exosphere_bin.h"
+#include "mariko_fatal_bin.h"
+#include "mesosphere_bin.h"
 #include "sept_secondary_00_enc.h"
 #include "sept_secondary_01_enc.h"
 #include "sept_secondary_dev_00_enc.h"
 #include "sept_secondary_dev_01_enc.h"
-#include "lp0fw_bin.h"
+#include "warmboot_bin.h"
 #include "emummc_kip.h"
 #undef u8
 #undef u32
 
-extern const uint8_t lp0fw_bin[];
-extern const uint32_t lp0fw_bin_size;
+extern const uint8_t warmboot_bin[];
+
+extern int fusee_is_experimental(void);
 
 static const uint8_t retail_pkc_modulus[0x100] = {
     0xF7, 0x86, 0x47, 0xAB, 0x71, 0x89, 0x81, 0xB5, 0xCF, 0x0C, 0xB0, 0xE8, 0x48, 0xA7, 0xFD, 0xAD,
@@ -119,10 +123,16 @@ static int emummc_ini_handler(void *user, const char *section, const char *name,
         } else if (strcmp(name, EMUMMC_ID_KEY) == 0) {
             sscanf(value, "%lx", &emummc_cfg->id);
         } else if (strcmp(name, EMUMMC_PATH_KEY) == 0) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
             strncpy(emummc_cfg->path, value, sizeof(emummc_cfg->path) - 1);
+#pragma GCC diagnostic pop
             emummc_cfg->path[sizeof(emummc_cfg->path) - 1]  = '\0';
         } else if (strcmp(name, EMUMMC_NINTENDO_PATH_KEY) == 0) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
             strncpy(emummc_cfg->nintendo_path, value, sizeof(emummc_cfg->nintendo_path) - 1);
+#pragma GCC diagnostic pop
             emummc_cfg->nintendo_path[sizeof(emummc_cfg->nintendo_path) - 1]  = '\0';
         } else {
             return 0;
@@ -186,6 +196,27 @@ static int exosphere_ini_handler(void *user, const char *section, const char *na
             } else if (tmp == 0) {
                 parse_cfg->allow_writing_to_cal_sysmmc = 0;
             }
+        } else if (strcmp(name, EXOSPHERE_LOG_PORT_KEY) == 0) {
+            sscanf(value, "%d", &tmp);
+            if (0 <= tmp && tmp < 4) {
+                parse_cfg->log_port = tmp;
+            } else {
+                parse_cfg->log_port = 0;
+            }
+        } else if (strcmp(name, EXOSPHERE_LOG_BAUD_RATE_KEY) == 0) {
+            sscanf(value, "%d", &tmp);
+            if (tmp > 0) {
+                parse_cfg->log_baud_rate = tmp;
+            } else {
+                parse_cfg->log_baud_rate = 115200;
+            }
+        } else if (strcmp(name, EXOSPHERE_LOG_INVERTED_KEY) == 0) {
+            sscanf(value, "%d", &tmp);
+            if (tmp == 1) {
+                parse_cfg->log_inverted = 1;
+            } else if (tmp == 0) {
+                parse_cfg->log_inverted = 0;
+            }
         } else {
             return 0;
         }
@@ -203,11 +234,11 @@ static int stratosphere_ini_handler(void *user, const char *section, const char 
             strat_cfg->has_nogc_config = true;
             sscanf(value, "%d", &tmp);
             strat_cfg->enable_nogc = tmp != 0;
-        } else if (strcmp(name, STRATOSPHERE_ENABLE_NCM_KEY) == 0) {
+        } else if (strcmp(name, STRATOSPHERE_DISABLE_NCM_KEY) == 0) {
             sscanf(value, "%d", &tmp);
-            strat_cfg->ncm_enabled = tmp != 0;
-            if (strat_cfg->ncm_enabled) {
-                stratosphere_enable_ncm();
+            strat_cfg->ncm_disabled = tmp != 0;
+            if (strat_cfg->ncm_disabled) {
+                stratosphere_disable_ncm();
             }
         } else {
             return 0;
@@ -218,41 +249,120 @@ static int stratosphere_ini_handler(void *user, const char *section, const char 
     return 1;
 }
 
+static bool is_nca_present(const char *nca_name) {
+    char path[0x100];
+    snprintf(path, sizeof(path), "system:/contents/registered/%s.nca", nca_name);
+
+    return is_valid_concatenation_file(path);
+}
+
+
+static uint32_t nxboot_get_specific_target_firmware(uint32_t target_firmware){
+    #define CHECK_NCA(NCA_ID, VERSION) do { if (is_nca_present(NCA_ID)) { return ATMOSPHERE_TARGET_FIRMWARE_##VERSION; } } while(0)
+
+    if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_11_0_0) {
+        CHECK_NCA("56211c7a5ed20a5332f5cdda67121e37", 11_0_1);
+        CHECK_NCA("594c90bcdbcccad6b062eadba0cd0e7e", 11_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_10_0_0) {
+        CHECK_NCA("26325de4db3909e0ef2379787c7e671d", 10_2_0);
+        CHECK_NCA("5077973537f6735b564dd7475b779f87", 10_1_1); /* Exclusive to China. */
+        CHECK_NCA("fd1faed0ca750700d254c0915b93d506", 10_1_0);
+        CHECK_NCA("34728c771299443420820d8ae490ea41", 10_0_4);
+        CHECK_NCA("5b1df84f88c3334335bbb45d8522cbb4", 10_0_3);
+        CHECK_NCA("e951bc9dedcd54f65ffd83d4d050f9e0", 10_0_2);
+        CHECK_NCA("36ab1acf0c10a2beb9f7d472685f9a89", 10_0_1);
+        CHECK_NCA("5625cdc21d5f1ca52f6c36ba261505b9", 10_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_9_1_0) {
+        CHECK_NCA("09ef4d92bb47b33861e695ba524a2c17", 9_2_0);
+        CHECK_NCA("c5fbb49f2e3648c8cfca758020c53ecb", 9_1_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_9_0_0) {
+        CHECK_NCA("fd1ffb82dc1da76346343de22edbc97c", 9_0_1);
+        CHECK_NCA("a6af05b33f8f903aab90c8b0fcbcc6a4", 9_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_8_1_0) {
+        CHECK_NCA("724d9b432929ea43e787ad81bf09ae65", 8_1_1); /* 8.1.1-100 from Lite */
+        CHECK_NCA("e9bb0602e939270a9348bddd9b78827b", 8_1_1); /* 8.1.1-12  from chinese gamecard */
+        CHECK_NCA("7eedb7006ad855ec567114be601b2a9d", 8_1_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_8_0_0) {
+        CHECK_NCA("6c5426d27c40288302ad616307867eba", 8_0_1);
+        CHECK_NCA("4fe7b4abcea4a0bcc50975c1a926efcb", 8_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_7_0_0) {
+        CHECK_NCA("e6b22c40bb4fa66a151f1dc8db5a7b5c", 7_0_1);
+        CHECK_NCA("c613bd9660478de69bc8d0e2e7ea9949", 7_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_6_2_0) {
+        CHECK_NCA("6dfaaf1a3cebda6307aa770d9303d9b6", 6_2_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_6_0_0) {
+        CHECK_NCA("1d21680af5a034d626693674faf81b02", 6_1_0);
+        CHECK_NCA("663e74e45ffc86fbbaeb98045feea315", 6_0_1);
+        CHECK_NCA("258c1786b0f6844250f34d9c6f66095b", 6_0_0); /* Release     6.0.0-5.0 */
+        CHECK_NCA("286e30bafd7e4197df6551ad802dd815", 6_0_0); /* Pre-Release 6.0.0-4.0 */
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_5_0_0) {
+        CHECK_NCA("fce3b0ea366f9c95fe6498b69274b0e7", 5_1_0);
+        CHECK_NCA("c5758b0cb8c6512e8967e38842d35016", 5_0_2);
+        CHECK_NCA("53eb605d4620e8fd50064b24fd57783a", 5_0_1);
+        CHECK_NCA("09a2f9c16ce1c121ae6d231b35d17515", 5_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_4_0_0) {
+        CHECK_NCA("77e1ae7661ad8a718b9b13b70304aeea", 4_1_0);
+        CHECK_NCA("d0e5d20e3260f3083bcc067483b71274", 4_0_1);
+        CHECK_NCA("483a24ee3fd7149f9112d1931166a678", 4_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_3_0_0) {
+        CHECK_NCA("704129fc89e1fcb85c37b3112e51b0fc", 3_0_2);
+        CHECK_NCA("1fb00543307337d523ccefa9923e0c50", 3_0_1);
+        CHECK_NCA("6ebd3447473bade18badbeb5032af87d", 3_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_2_0_0) {
+        CHECK_NCA("d1c991c53a8a9038f8c3157a553d876d", 2_3_0);
+        CHECK_NCA("7f90353dff2d7ce69e19e07ebc0d5489", 2_2_0);
+        CHECK_NCA("e9b3e75fce00e52fe646156634d229b4", 2_1_0);
+        CHECK_NCA("7a1f79f8184d4b9bae1755090278f52c", 2_0_0);
+    } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_1_0_0) {
+        CHECK_NCA("a1b287e07f8455e8192f13d0e45a2aaf", 1_0_0); /* 1.0.0 from Factory */
+        CHECK_NCA("117f7b9c7da3e8cef02340596af206b3", 1_0_0); /* 1.0.0 from Gamecard */
+    } else {
+        fatal_error("[NXBOOT] Unknown Target Firmware!");
+    }
+
+    #undef CHECK_NCA
+
+    /* If we didn't find a more specific firmware, return our package1 approximation. */
+    return target_firmware;
+}
+
 static uint32_t nxboot_get_target_firmware(const void *package1loader) {
     const package1loader_header_t *package1loader_header = (const package1loader_header_t *)package1loader;
     switch (package1loader_header->version) {
         case 0x01:          /* 1.0.0 */
-            return ATMOSPHERE_TARGET_FIRMWARE_100;
+            return ATMOSPHERE_TARGET_FIRMWARE_1_0_0;
         case 0x02:          /* 2.0.0 - 2.3.0 */
-            return ATMOSPHERE_TARGET_FIRMWARE_200;
+            return ATMOSPHERE_TARGET_FIRMWARE_2_0_0;
         case 0x04:          /* 3.0.0 and 3.0.1 - 3.0.2 */
-            return ATMOSPHERE_TARGET_FIRMWARE_300;
+            return ATMOSPHERE_TARGET_FIRMWARE_3_0_0;
         case 0x07:          /* 4.0.0 - 4.1.0 */
-            return ATMOSPHERE_TARGET_FIRMWARE_400;
+            return ATMOSPHERE_TARGET_FIRMWARE_4_0_0;
         case 0x0B:          /* 5.0.0 - 5.1.0 */
-            return ATMOSPHERE_TARGET_FIRMWARE_500;
+            return ATMOSPHERE_TARGET_FIRMWARE_5_0_0;
         case 0x0E: {        /* 6.0.0 - 6.2.0 */
             if (memcmp(package1loader_header->build_timestamp, "20180802", 8) == 0) {
-                return ATMOSPHERE_TARGET_FIRMWARE_600;
+                return ATMOSPHERE_TARGET_FIRMWARE_6_0_0;
             } else if (memcmp(package1loader_header->build_timestamp, "20181107", 8) == 0) {
-                return ATMOSPHERE_TARGET_FIRMWARE_620;
+                return ATMOSPHERE_TARGET_FIRMWARE_6_2_0;
             } else {
                 fatal_error("[NXBOOT] Unable to identify package1!\n");
             }
         }
         case 0x0F:          /* 7.0.0 - 7.0.1 */
-            return ATMOSPHERE_TARGET_FIRMWARE_700;
+            return ATMOSPHERE_TARGET_FIRMWARE_7_0_0;
         case 0x10: {        /* 8.0.0 - 9.0.0 */
             if (memcmp(package1loader_header->build_timestamp, "20190314", 8) == 0) {
-                return ATMOSPHERE_TARGET_FIRMWARE_800;
+                return ATMOSPHERE_TARGET_FIRMWARE_8_0_0;
             } else if (memcmp(package1loader_header->build_timestamp, "20190531", 8) == 0) {
-                return ATMOSPHERE_TARGET_FIRMWARE_810;
+                return ATMOSPHERE_TARGET_FIRMWARE_8_1_0;
             } else if (memcmp(package1loader_header->build_timestamp, "20190809", 8) == 0) {
-                return ATMOSPHERE_TARGET_FIRMWARE_900;
+                return ATMOSPHERE_TARGET_FIRMWARE_9_0_0;
             } else if (memcmp(package1loader_header->build_timestamp, "20191021", 8) == 0) {
-                return ATMOSPHERE_TARGET_FIRMWARE_910;
+                return ATMOSPHERE_TARGET_FIRMWARE_9_1_0;
             } else if (memcmp(package1loader_header->build_timestamp, "20200303", 8) == 0) {
-                return ATMOSPHERE_TARGET_FIRMWARE_1000;
+                return ATMOSPHERE_TARGET_FIRMWARE_10_0_0;
+            } else if (memcmp(package1loader_header->build_timestamp, "20201030", 8) == 0) {
+                return ATMOSPHERE_TARGET_FIRMWARE_11_0_0;
             } else {
                 fatal_error("[NXBOOT] Unable to identify package1!\n");
             }
@@ -287,7 +397,10 @@ static bool nxboot_configure_emummc(exo_emummc_config_t *exo_emummc_config) {
 
     /* Initialize values from emummc config. */
     exo_emummc_config->base_cfg.id         = emummc_cfg.id;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
     strncpy(exo_emummc_config->emu_dir_path, emummc_cfg.nintendo_path, sizeof(exo_emummc_config->emu_dir_path));
+#pragma GCC diagnostic pop
     exo_emummc_config->emu_dir_path[sizeof(exo_emummc_config->emu_dir_path) - 1] = '\0';
 
     if (emummc_cfg.enabled) {
@@ -301,7 +414,10 @@ static bool nxboot_configure_emummc(exo_emummc_config_t *exo_emummc_config) {
             }
         } else if (is_valid_folder(emummc_cfg.path)) {
             exo_emummc_config->base_cfg.type  = EMUMMC_TYPE_FILES;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
             strncpy(exo_emummc_config->file_cfg.path, emummc_cfg.path, sizeof(exo_emummc_config->file_cfg.path));
+#pragma GCC diagnostic pop
             exo_emummc_config->file_cfg.path[sizeof(exo_emummc_config->file_cfg.path) - 1] = '\0';
 
             int num_parts = 0;
@@ -370,9 +486,9 @@ static void nxboot_configure_exosphere(uint32_t target_firmware, unsigned int ke
     const bool is_emummc = exo_emummc_cfg->base_cfg.magic == MAGIC_EMUMMC_CONFIG && exo_emummc_cfg->base_cfg.type != EMUMMC_TYPE_NONE;
 
     if (keygen_type) {
-        exo_cfg.flags = EXOSPHERE_FLAG_PERFORM_620_KEYGEN;
+        exo_cfg.flags[0] = EXOSPHERE_FLAG_PERFORM_620_KEYGEN;
     } else {
-        exo_cfg.flags = 0;
+        exo_cfg.flags[0] = 0;
     }
 
     /* Setup exosphere parse configuration with defaults. */
@@ -384,6 +500,9 @@ static void nxboot_configure_exosphere(uint32_t target_firmware, unsigned int ke
         .blank_prodinfo_sysmmc              = 0,
         .blank_prodinfo_emummc              = 0,
         .allow_writing_to_cal_sysmmc        = 0,
+        .log_port                           = 0,
+        .log_baud_rate                      = 115200,
+        .log_inverted                       = 0,
     };
 
     /* If we have an ini to read, parse it. */
@@ -396,13 +515,17 @@ static void nxboot_configure_exosphere(uint32_t target_firmware, unsigned int ke
     free(exosphere_ini);
 
     /* Apply parse config. */
-    if (parse_cfg.debugmode)                           exo_cfg.flags |= EXOSPHERE_FLAG_IS_DEBUGMODE_PRIV;
-    if (parse_cfg.debugmode_user)                      exo_cfg.flags |= EXOSPHERE_FLAG_IS_DEBUGMODE_USER;
-    if (parse_cfg.disable_user_exception_handlers)     exo_cfg.flags |= EXOSPHERE_FLAG_DISABLE_USERMODE_EXCEPTION_HANDLERS;
-    if (parse_cfg.enable_user_pmu_access)              exo_cfg.flags |= EXOSPHERE_FLAG_ENABLE_USERMODE_PMU_ACCESS;
-    if (parse_cfg.blank_prodinfo_sysmmc && !is_emummc) exo_cfg.flags |= EXOSPHERE_FLAG_BLANK_PRODINFO;
-    if (parse_cfg.blank_prodinfo_emummc &&  is_emummc) exo_cfg.flags |= EXOSPHERE_FLAG_BLANK_PRODINFO;
-    if (parse_cfg.allow_writing_to_cal_sysmmc)         exo_cfg.flags |= EXOSPHERE_FLAG_ALLOW_WRITING_TO_CAL_SYSMMC;
+    if (parse_cfg.debugmode)                           exo_cfg.flags[0] |= EXOSPHERE_FLAG_IS_DEBUGMODE_PRIV;
+    if (parse_cfg.debugmode_user)                      exo_cfg.flags[0] |= EXOSPHERE_FLAG_IS_DEBUGMODE_USER;
+    if (parse_cfg.disable_user_exception_handlers)     exo_cfg.flags[0] |= EXOSPHERE_FLAG_DISABLE_USERMODE_EXCEPTION_HANDLERS;
+    if (parse_cfg.enable_user_pmu_access)              exo_cfg.flags[0] |= EXOSPHERE_FLAG_ENABLE_USERMODE_PMU_ACCESS;
+    if (parse_cfg.blank_prodinfo_sysmmc && !is_emummc) exo_cfg.flags[0] |= EXOSPHERE_FLAG_BLANK_PRODINFO;
+    if (parse_cfg.blank_prodinfo_emummc &&  is_emummc) exo_cfg.flags[0] |= EXOSPHERE_FLAG_BLANK_PRODINFO;
+    if (parse_cfg.allow_writing_to_cal_sysmmc)         exo_cfg.flags[0] |= EXOSPHERE_FLAG_ALLOW_WRITING_TO_CAL_SYSMMC;
+
+    exo_cfg.log_port      = parse_cfg.log_port;
+    exo_cfg.log_baud_rate = parse_cfg.log_baud_rate;
+    if (parse_cfg.log_inverted) exo_cfg.log_flags |= EXOSPHERE_LOG_FLAG_INVERTED;
 
     if ((exo_cfg.target_firmware < ATMOSPHERE_TARGET_FIRMWARE_MIN) || (exo_cfg.target_firmware > ATMOSPHERE_TARGET_FIRMWARE_MAX)) {
         fatal_error("[NXBOOT] Invalid Exosphere target firmware!\n");
@@ -424,11 +547,15 @@ static void nxboot_configure_stratosphere(uint32_t target_firmware) {
         }
     } else {
         /* Check if fuses are < 4.0.0, but firmware is >= 4.0.0 */
-        if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_400 && !(fuse_get_reserved_odm(7) & ~0x0000000F)) {
+        if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_4_0_0 && !(fuse_get_reserved_odm(7) & ~0x0000000F)) {
             kip_patches_set_enable_nogc();
         }
         /* Check if the fuses are < 9.0.0, but firmware is >= 9.0.0 */
-        if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_900 && !(fuse_get_reserved_odm(7) & ~0x000003FF)) {
+        if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_9_0_0 && !(fuse_get_reserved_odm(7) & ~0x000003FF)) {
+            kip_patches_set_enable_nogc();
+        }
+        /* Check if the fuses are < 11.0.0, but firmware is >= 11.0.0 */
+        if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_11_0_0 && !(fuse_get_reserved_odm(7) & ~0x00001FFF)) {
             kip_patches_set_enable_nogc();
         }
     }
@@ -516,8 +643,8 @@ static void nxboot_move_bootconfig() {
     fclose(bcfile);
 
     /* Select the actual BootConfig size and destination address. */
-    bootconfig_addr = (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware < ATMOSPHERE_TARGET_FIRMWARE_600) ? 0x4003D000 : 0x4003F800;
-    bootconfig_size = (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware < ATMOSPHERE_TARGET_FIRMWARE_400) ? 0x3000 : 0x1000;
+    bootconfig_addr = 0x4003F800;
+    bootconfig_size = 0x800;
 
     /* Copy the BootConfig into IRAM. */
     memset((void *)bootconfig_addr, 0, bootconfig_size);
@@ -538,6 +665,7 @@ static nx_keyblob_t __attribute__((aligned(16))) g_keyblobs[32];
 uint32_t nxboot_main(void) {
     volatile tegra_pmc_t *pmc = pmc_get_regs();
     loader_ctx_t *loader_ctx = get_loader_ctx();
+    const bool is_experimental = fusee_is_experimental();
     package2_header_t *package2;
     size_t package2_size;
     void *tsec_fw;
@@ -549,6 +677,8 @@ uint32_t nxboot_main(void) {
     void *warmboot_memaddr;
     void *package1loader;
     size_t package1loader_size;
+    void *mesosphere;
+    size_t mesosphere_size;
     void *emummc;
     size_t emummc_size;
     uint32_t available_revision;
@@ -566,7 +696,7 @@ uint32_t nxboot_main(void) {
     } else {
         emummc_size = get_file_size("atmosphere/emummc.kip");
         if (emummc_size != 0) {
-            /* Allocate memory for the TSEC firmware. */
+            /* Allocate memory for the emummc KIP. */
             emummc = memalign(0x100, emummc_size);
 
             if (emummc == NULL) {
@@ -638,6 +768,7 @@ uint32_t nxboot_main(void) {
 
     /* Find the system's target firmware. */
     uint32_t target_firmware = nxboot_get_target_firmware(package1loader);
+
     if (!target_firmware)
         fatal_error("[NXBOOT] Failed to detect target firmware!\n");
     else
@@ -685,7 +816,7 @@ uint32_t nxboot_main(void) {
         if (!package1_get_tsec_fw(&tsec_fw, package1loader, package1loader_size)) {
             fatal_error("[NXBOOT] Failed to read the TSEC firmware from Package1loader!\n");
         }
-        if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_810) {
+        if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_8_1_0) {
             if (fuse_get_retail_type() != 0) {
                 sept_secondary_enc = sept_secondary_01_enc;
                 sept_secondary_enc_size = sept_secondary_01_enc_size;
@@ -694,7 +825,7 @@ uint32_t nxboot_main(void) {
                 sept_secondary_enc_size = sept_secondary_dev_01_enc_size;
             }
             tsec_fw_size = 0x3300;
-        } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_700) {
+        } else if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_7_0_0) {
             if (fuse_get_retail_type() != 0) {
                 sept_secondary_enc = sept_secondary_00_enc;
                 sept_secondary_enc_size = sept_secondary_00_enc_size;
@@ -703,7 +834,7 @@ uint32_t nxboot_main(void) {
                 sept_secondary_enc_size = sept_secondary_dev_00_enc_size;
             }
             tsec_fw_size = 0x3000;
-        } else if (target_firmware == ATMOSPHERE_TARGET_FIRMWARE_620) {
+        } else if (target_firmware == ATMOSPHERE_TARGET_FIRMWARE_6_2_0) {
             tsec_fw_size = 0x2900;
         } else {
             tsec_fw_size = 0xF00;
@@ -715,7 +846,7 @@ uint32_t nxboot_main(void) {
     /* Get the TSEC keys. */
     uint8_t tsec_key[0x10] = {0};
     uint8_t tsec_root_keys[0x20][0x10] = {0};
-    if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_700) {
+    if (target_firmware >= ATMOSPHERE_TARGET_FIRMWARE_7_0_0) {
         /* Detect whether we need to run sept-secondary in order to derive keys. */
         if (!get_and_clear_has_run_sept()) {
             reboot_to_sept(tsec_fw, tsec_fw_size, sept_secondary_enc, sept_secondary_enc_size);
@@ -725,7 +856,7 @@ uint32_t nxboot_main(void) {
             }
         }
         get_and_clear_has_run_sept();
-    } else if (target_firmware == ATMOSPHERE_TARGET_FIRMWARE_620) {
+    } else if (target_firmware == ATMOSPHERE_TARGET_FIRMWARE_6_2_0) {
         uint8_t tsec_keys[0x20] = {0};
 
         /* Emulate the TSEC payload on 6.2.0+. */
@@ -746,19 +877,44 @@ uint32_t nxboot_main(void) {
 
     /* Derive keydata. If on 7.0.0+, sept has already derived keys for us. */
     unsigned int keygen_type = 0;
-    if (target_firmware < ATMOSPHERE_TARGET_FIRMWARE_700) {
+    if (target_firmware < ATMOSPHERE_TARGET_FIRMWARE_7_0_0) {
         if (derive_nx_keydata(target_firmware, g_keyblobs, available_revision, tsec_key, tsec_root_keys, &keygen_type) != 0) {
             fatal_error("[NXBOOT] Key derivation failed!\n");
         }
     }
 
+    /* Derive new device keys. */
+    {
+        derive_new_device_keys(fuse_get_retail_type() != 0, KEYSLOT_SWITCH_5XNEWDEVICEKEYGENKEY, target_firmware);
+    }
+
+    /* Set the system partition's keys. */
+    if (fsdev_register_keys("system", target_firmware, BisPartition_UserSystem) != 0) {
+        fatal_error("[NXBOOT] Failed to set SYSTEM partition keys!\n");
+    }
+
+    /* Mount the system partition. */
+    if (fsdev_register_device("system") != 0) {
+        fatal_error("[NXBOOT] Failed to register SYSTEM partition!\n");
+    }
+
+    /* Lightly validate the system partition. */
+    if (!is_valid_folder("system:/Contents")) {
+        fatal_error("[NXBOOT] SYSTEM partition seems corrupted!\n");
+    }
+
+    /* Make the target firmware more specific. */
+    target_firmware = nxboot_get_specific_target_firmware(target_firmware);
+
     /* Setup boot configuration for Exosphère. */
     nxboot_configure_exosphere(target_firmware, keygen_type, &exo_emummc_cfg);
 
     /* Initialize Boot Reason on older firmware versions. */
-    if (target_firmware < ATMOSPHERE_TARGET_FIRMWARE_400) {
+    if (target_firmware < ATMOSPHERE_TARGET_FIRMWARE_4_0_0) {
         print(SCREEN_LOG_LEVEL_INFO, "[NXBOOT] Initializing Boot Reason...\n");
-        nxboot_set_bootreason((void *)MAILBOX_NX_BOOTLOADER_BOOT_REASON_BASE(target_firmware));
+        nxboot_set_bootreason((void *)MAILBOX_NX_BOOTLOADER_BOOT_REASON_BASE);
+    } else {
+        memset((void *)MAILBOX_NX_BOOTLOADER_BOOT_REASON_BASE, 0, 0x200);
     }
 
     /* Read the warmboot firmware from a file, otherwise from Atmosphere's implementation. */
@@ -779,14 +935,14 @@ uint32_t nxboot_main(void) {
         }
     } else {
         /* Use Atmosphere's warmboot firmware implementation. */
-        warmboot_fw_size = lp0fw_bin_size;
+        warmboot_fw_size = warmboot_bin_size;
         warmboot_fw = malloc(warmboot_fw_size);
 
         if (warmboot_fw == NULL) {
             fatal_error("[NXBOOT] Out of memory!\n");
         }
 
-        memcpy(warmboot_fw, lp0fw_bin, warmboot_fw_size);
+        memcpy(warmboot_fw, warmboot_bin, warmboot_fw_size);
 
         if (warmboot_fw_size == 0) {
             fatal_error("[NXBOOT] Could not read the warmboot firmware from Package1!\n");
@@ -807,23 +963,50 @@ uint32_t nxboot_main(void) {
     }
 
     /* Select the right address for the warmboot firmware. */
-    if (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware < ATMOSPHERE_TARGET_FIRMWARE_400) {
-        warmboot_memaddr = (void *)0x8000D000;
-    } else if (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware < ATMOSPHERE_TARGET_FIRMWARE_600) {
-        warmboot_memaddr = (void *)0x4003B000;
-    } else if (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware < ATMOSPHERE_TARGET_FIRMWARE_700) {
-        warmboot_memaddr = (void *)0x4003D800;
-    } else {
-        warmboot_memaddr = (void *)0x4003E000;
-    }
+    warmboot_memaddr = (void *)0x4003E000;
 
     print(SCREEN_LOG_LEVEL_INFO, "[NXBOOT] Copying warmboot firmware...\n");
 
     /* Copy the warmboot firmware and set the address in PMC if necessary. */
     if (warmboot_fw && (warmboot_fw_size > 0)) {
         memcpy(warmboot_memaddr, warmboot_fw, warmboot_fw_size);
-        if (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware < ATMOSPHERE_TARGET_FIRMWARE_400)
+        if (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware < ATMOSPHERE_TARGET_FIRMWARE_4_0_0)
             pmc->scratch1 = (uint32_t)warmboot_memaddr;
+    }
+
+    /* Configure mesosphere. */
+    {
+        size_t sd_meso_size = get_file_size("atmosphere/mesosphere.bin");
+        if (sd_meso_size != 0) {
+            if (sd_meso_size > PACKAGE2_SIZE_MAX) {
+                fatal_error("Error: atmosphere/mesosphere.bin is too large!\n");
+            }
+            mesosphere = malloc(sd_meso_size);
+            if (mesosphere == NULL) {
+                fatal_error("Error: failed to allocate mesosphere!\n");
+            }
+            if (read_from_file(mesosphere, sd_meso_size, "atmosphere/mesosphere.bin") != sd_meso_size) {
+                fatal_error("Error: failed to read atmosphere/mesosphere.bin!\n");
+            }
+            mesosphere_size = sd_meso_size;
+        } else if (is_experimental) {
+            mesosphere_size = mesosphere_bin_size;
+
+            mesosphere      = malloc(mesosphere_size);
+
+            if (mesosphere == NULL) {
+                fatal_error("[NXBOOT] Out of memory!\n");
+            }
+
+            memcpy(mesosphere, mesosphere_bin, mesosphere_size);
+
+            if (mesosphere_size == 0) {
+                fatal_error("[NXBOOT] Could not read embedded mesosphere!\n");
+            }
+        } else {
+            mesosphere = NULL;
+            mesosphere_size = 0;
+        }
     }
 
     print(SCREEN_LOG_LEVEL_INFO, "[NXBOOT] Rebuilding package2...\n");
@@ -834,7 +1017,7 @@ uint32_t nxboot_main(void) {
     print(SCREEN_LOG_LEVEL_INFO, u8"[NXBOOT] Configured Stratosphere...\n");
 
     /* Patch package2, adding Thermosphère + custom KIPs. */
-    package2_rebuild_and_copy(package2, MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware, emummc, emummc_size);
+    package2_rebuild_and_copy(package2, MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware, mesosphere, mesosphere_size, emummc, emummc_size);
 
     /* Set detected FS version. */
     MAILBOX_EXOSPHERE_CONFIGURATION->emummc_cfg.base_cfg.fs_version = stratosphere_get_fs_version();
@@ -842,11 +1025,7 @@ uint32_t nxboot_main(void) {
     print(SCREEN_LOG_LEVEL_INFO, u8"[NXBOOT] Reading Exosphère...\n");
 
     /* Select the right address for Exosphère. */
-    if (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware < ATMOSPHERE_TARGET_FIRMWARE_400) {
-        exosphere_memaddr = (void *)0x4002D000;
-    } else {
-        exosphere_memaddr = (void *)0x4002B000;
-    }
+    exosphere_memaddr = (void *)0x40030000;
 
     /* Copy Exosphère to a good location or read it directly to it. */
     if (loader_ctx->exosphere_path[0] != '\0') {
@@ -865,12 +1044,30 @@ uint32_t nxboot_main(void) {
         memcpy(exosphere_memaddr, exosphere_bin, exosphere_bin_size);
     }
 
+    /* Copy the exosphere mariko fatal program to a good location. */
+    {
+        void * const mariko_fatal_dst = (void *)0x80020000;
+        memset(mariko_fatal_dst, 0, 0x20000);
+
+        const size_t sd_mf_size = get_file_size("atmosphere/mariko_fatal.bin");
+        if (sd_mf_size != 0) {
+            if (sd_mf_size > 0x20000) {
+                fatal_error("Error: atmosphere/mariko_fatal.bin is too large!\n");
+            }
+            if (read_from_file(mariko_fatal_dst, sd_mf_size, "atmosphere/mariko_fatal.bin") != sd_mf_size) {
+                fatal_error("Error: failed to read atmosphere/mariko_fatal.bin");
+            }
+        } else {
+            memcpy(mariko_fatal_dst, mariko_fatal_bin, mariko_fatal_bin_size);
+        }
+    }
+
     /* Move BootConfig. */
     print(SCREEN_LOG_LEVEL_INFO, "[NXBOOT] Moving BootConfig...\n");
     nxboot_move_bootconfig();
 
     /* Set 3.0.0/3.0.1/3.0.2 warmboot security check. */
-    if (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware == ATMOSPHERE_TARGET_FIRMWARE_300) {
+    if (MAILBOX_EXOSPHERE_CONFIGURATION->target_firmware == ATMOSPHERE_TARGET_FIRMWARE_3_0_0) {
         const package1loader_header_t *package1loader_header = (const package1loader_header_t *)package1loader;
         if (!strcmp(package1loader_header->build_timestamp, "20170519101410"))
             pmc->secure_scratch32 = 0xE3;       /* Warmboot 3.0.0 security check.*/
@@ -892,6 +1089,12 @@ uint32_t nxboot_main(void) {
 
     /* Wait for the splash screen to have been displayed for as long as it should be. */
     splash_screen_wait_delay();
+
+    /* Set reset for USBD, USB2, AHBDMA, and APBDMA. */
+    rst_enable(CARDEVICE_USBD);
+    rst_enable(CARDEVICE_USB2);
+    rst_enable(CARDEVICE_AHBDMA);
+    rst_enable(CARDEVICE_APBDMA);
 
     /* Return the memory address for booting CPU0. */
     return (uint32_t)exosphere_memaddr;

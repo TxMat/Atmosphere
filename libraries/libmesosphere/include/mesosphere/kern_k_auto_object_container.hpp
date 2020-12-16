@@ -23,7 +23,7 @@ namespace ams::kern {
     class KAutoObjectWithListContainer {
         NON_COPYABLE(KAutoObjectWithListContainer);
         NON_MOVEABLE(KAutoObjectWithListContainer);
-        private:
+        public:
             using ListType = util::IntrusiveRedBlackTreeMemberTraits<&KAutoObjectWithList::list_node>::TreeType<KAutoObjectWithList>;
         public:
             class ListAccessor : public KScopedLightLock {
@@ -56,8 +56,8 @@ namespace ams::kern {
             void Initialize() { MESOSPHERE_ASSERT_THIS(); }
             void Finalize() { MESOSPHERE_ASSERT_THIS(); }
 
-            Result Register(KAutoObjectWithList *obj);
-            Result Unregister(KAutoObjectWithList *obj);
+            void Register(KAutoObjectWithList *obj);
+            void Unregister(KAutoObjectWithList *obj);
             size_t GetOwnedCount(KProcess *owner);
     };
 

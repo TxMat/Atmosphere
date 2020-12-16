@@ -34,7 +34,7 @@ namespace ams::psc {
         ::PscPmModule module;
         R_TRY(::pscmGetPmModule(std::addressof(module), static_cast<::PscPmModuleId>(mid), reinterpret_cast<const u16 *>(dependencies), dependency_count, clear_mode == os::EventClearMode_AutoClear));
 
-        this->intf = std::make_shared<RemotePmModule>(module);
+        this->intf = ams::sf::MakeShared<psc::sf::IPmModule, RemotePmModule>(module);
         this->system_event.AttachReadableHandle(module.event.revent, false, clear_mode);
         this->initialized = true;
         return ResultSuccess();
@@ -60,7 +60,7 @@ namespace ams::psc {
         R_ABORT_UNLESS(res);
         R_UNLESS(this->initialized, psc::ResultNotInitialized());
 
-        if (hos::GetVersion() >= hos::Version_6_0_0) {
+        if (hos::GetVersion() >= hos::Version_5_1_0) {
             return this->intf->AcknowledgeEx(state);
         } else {
             return this->intf->Acknowledge();

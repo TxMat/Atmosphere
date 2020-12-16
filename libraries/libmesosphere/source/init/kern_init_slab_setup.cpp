@@ -22,7 +22,7 @@ namespace ams::kern::init {
     #define FOREACH_SLAB_TYPE(HANDLER, ...)                                                                                     \
         HANDLER(KProcess,            (SLAB_COUNT(KProcess)),                                                    ## __VA_ARGS__) \
         HANDLER(KThread,             (SLAB_COUNT(KThread)),                                                     ## __VA_ARGS__) \
-        HANDLER(KLinkedListNode,     (SLAB_COUNT(KThread) * 17),                                                ## __VA_ARGS__) \
+        HANDLER(KLinkedListNode,     (SLAB_COUNT(KThread)),                                                     ## __VA_ARGS__) \
         HANDLER(KEvent,              (SLAB_COUNT(KEvent)),                                                      ## __VA_ARGS__) \
         HANDLER(KInterruptEvent,     (SLAB_COUNT(KInterruptEvent)),                                             ## __VA_ARGS__) \
         HANDLER(KInterruptEventTask, (SLAB_COUNT(KInterruptEvent)),                                             ## __VA_ARGS__) \
@@ -39,7 +39,9 @@ namespace ams::kern::init {
         HANDLER(KObjectName,         (SLAB_COUNT(KObjectName)),                                                 ## __VA_ARGS__) \
         HANDLER(KResourceLimit,      (SLAB_COUNT(KResourceLimit)),                                              ## __VA_ARGS__) \
         HANDLER(KEventInfo,          (SLAB_COUNT(KThread) + SLAB_COUNT(KDebug)),                                ## __VA_ARGS__) \
-        HANDLER(KDebug,              (SLAB_COUNT(KDebug)),                                                      ## __VA_ARGS__)
+        HANDLER(KDebug,              (SLAB_COUNT(KDebug)),                                                      ## __VA_ARGS__) \
+        HANDLER(KAlpha,              (SLAB_COUNT(KAlpha)),                                                      ## __VA_ARGS__) \
+        HANDLER(KBeta,               (SLAB_COUNT(KBeta)),                                                       ## __VA_ARGS__)
 
     namespace {
 
@@ -68,11 +70,17 @@ namespace ams::kern::init {
         constexpr size_t SlabCountKObjectName           = 7;
         constexpr size_t SlabCountKResourceLimit        = 5;
         constexpr size_t SlabCountKDebug                = cpu::NumCores;
+        constexpr size_t SlabCountKAlpha                = 1;
+        constexpr size_t SlabCountKBeta                 = 6;
 
         constexpr size_t SlabCountExtraKThread          = 160;
 
-        /* This is used for gaps between the slab allocators. */
-        constexpr size_t SlabRegionReservedSize         = 2_MB;
+        namespace test {
+
+            constexpr size_t RequiredSizeForExtraThreadCount = SlabCountExtraKThread * (sizeof(KThread) + sizeof(KLinkedListNode) + (sizeof(KThreadLocalPage) / 8) + sizeof(KEventInfo));
+            static_assert(RequiredSizeForExtraThreadCount <= KernelSlabHeapAdditionalSize);
+
+        }
 
         /* Global to hold our resource counts. */
         KSlabResourceCounts g_slab_resource_counts = {
@@ -90,6 +98,8 @@ namespace ams::kern::init {
             .num_KObjectName            = SlabCountKObjectName,
             .num_KResourceLimit         = SlabCountKResourceLimit,
             .num_KDebug                 = SlabCountKDebug,
+            .num_KAlpha                 = SlabCountKAlpha,
+            .num_KBeta                  = SlabCountKBeta,
         };
 
         template<typename T>
@@ -98,7 +108,9 @@ namespace ams::kern::init {
             KVirtualAddress start = util::AlignUp(GetInteger(address), alignof(T));
 
             if (size > 0) {
-                MESOSPHERE_ABORT_UNLESS(KMemoryLayout::GetVirtualMemoryRegionTree().FindContainingRegion(GetInteger(start) + size - 1)->IsDerivedFrom(KMemoryRegionType_KernelSlab));
+                const KMemoryRegion *region = KMemoryLayout::Find(start + size - 1);
+                MESOSPHERE_ABORT_UNLESS(region != nullptr);
+                MESOSPHERE_ABORT_UNLESS(region->IsDerivedFrom(KMemoryRegionType_KernelSlab));
                 T::InitializeSlabHeap(GetVoidPointer(start), size);
             }
 
@@ -119,6 +131,10 @@ namespace ams::kern::init {
         }
     }
 
+    size_t CalculateSlabHeapGapSize() {
+        return (kern::GetTargetFirmware() >= TargetFirmware_10_0_0) ? KernelSlabHeapGapsSize : KernelSlabHeapGapsSizeDeprecated;
+    }
+
     size_t CalculateTotalSlabHeapSize() {
         size_t size = 0;
 
@@ -127,10 +143,13 @@ namespace ams::kern::init {
             size += util::AlignUp(sizeof(NAME) * (COUNT), alignof(void *)); \
         });
 
-        /* NOTE: This can't be used right now because we don't have all these types implemented. */
-        /* Once we do, uncomment the following and stop using the hardcoded size. */
-        /* TODO: FOREACH_SLAB_TYPE(ADD_SLAB_SIZE) */
-        size = 0x647000;
+        /* Add the size required for each slab. */
+        FOREACH_SLAB_TYPE(ADD_SLAB_SIZE)
+
+        #undef ADD_SLAB_SIZE
+
+        /* Add the reserved size. */
+        size += CalculateSlabHeapGapSize();
 
         return size;
     }
@@ -145,11 +164,8 @@ namespace ams::kern::init {
 
         /* Allocate memory for the slab. */
         constexpr auto AllocateOption = KMemoryManager::EncodeOption(KMemoryManager::Pool_System, KMemoryManager::Direction_FromFront);
-        const KVirtualAddress slab_address = Kernel::GetMemoryManager().AllocateContinuous(num_pages, 1, AllocateOption);
+        const KVirtualAddress slab_address = Kernel::GetMemoryManager().AllocateAndOpenContinuous(num_pages, 1, AllocateOption);
         MESOSPHERE_ABORT_UNLESS(slab_address != Null<KVirtualAddress>);
-
-        /* Open references to the slab. */
-        Kernel::GetMemoryManager().Open(slab_address, num_pages);
 
         /* Initialize the slabheap. */
         KPageBuffer::InitializeSlabHeap(GetVoidPointer(slab_address), slab_size);
@@ -170,11 +186,12 @@ namespace ams::kern::init {
         }
 
         /* Create an array to represent the gaps between the slabs. */
+        const size_t total_gap_size = CalculateSlabHeapGapSize();
         size_t slab_gaps[util::size(slab_types)];
         for (size_t i = 0; i < util::size(slab_gaps); i++) {
             /* Note: This is an off-by-one error from Nintendo's intention, because GenerateRandomRange is inclusive. */
             /* However, Nintendo also has the off-by-one error, and it's "harmless", so we will include it ourselves. */
-            slab_gaps[i] = KSystemControl::GenerateRandomRange(0, SlabRegionReservedSize);
+            slab_gaps[i] = KSystemControl::GenerateRandomRange(0, total_gap_size);
         }
 
         /* Sort the array, so that we can treat differences between values as offsets to the starts of slabs. */

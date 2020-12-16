@@ -21,69 +21,24 @@ namespace ams::kern {
     class KThread;
     class KProcess;
     class KScheduler;
-    class KInterruptTaskManager;
-
-    struct KCurrentContext {
-        std::atomic<KThread *> current_thread;
-        std::atomic<KProcess *> current_process;
-        KScheduler *scheduler;
-        KInterruptTaskManager *interrupt_task_manager;
-        s32 core_id;
-        void *exception_stack_top;
-    };
-    static_assert(std::is_pod<KCurrentContext>::value);
-    static_assert(sizeof(KCurrentContext) <= cpu::DataCacheLineSize);
-
-    namespace impl {
-
-        ALWAYS_INLINE KCurrentContext &GetCurrentContext() {
-            return *reinterpret_cast<KCurrentContext *>(cpu::GetCoreLocalRegionAddress());
-        }
-
-    }
 
     ALWAYS_INLINE KThread *GetCurrentThreadPointer() {
-        return impl::GetCurrentContext().current_thread.load(std::memory_order_relaxed);
+        return reinterpret_cast<KThread *>(cpu::GetCurrentThreadPointerValue());
     }
 
     ALWAYS_INLINE KThread &GetCurrentThread() {
         return *GetCurrentThreadPointer();
     }
 
-    ALWAYS_INLINE KProcess *GetCurrentProcessPointer() {
-        return impl::GetCurrentContext().current_process.load(std::memory_order_relaxed);
-    }
-
-    ALWAYS_INLINE KProcess &GetCurrentProcess() {
-        return *GetCurrentProcessPointer();
-    }
-
-    ALWAYS_INLINE KScheduler *GetCurrentSchedulerPointer() {
-        return impl::GetCurrentContext().scheduler;
-    }
-
-    ALWAYS_INLINE KScheduler &GetCurrentScheduler() {
-        return *GetCurrentSchedulerPointer();
-    }
-
-    ALWAYS_INLINE KInterruptTaskManager *GetCurrentInterruptTaskManagerPointer() {
-        return impl::GetCurrentContext().interrupt_task_manager;
-    }
-
-    ALWAYS_INLINE KInterruptTaskManager &GetCurrentInterruptTaskManager() {
-        return *GetCurrentInterruptTaskManagerPointer();
-    }
-
-    ALWAYS_INLINE s32 GetCurrentCoreId() {
-        return impl::GetCurrentContext().core_id;
-    }
-
     ALWAYS_INLINE void SetCurrentThread(KThread *new_thread) {
-        impl::GetCurrentContext().current_thread = new_thread;
+        cpu::SetCurrentThreadPointerValue(reinterpret_cast<uintptr_t>(new_thread));
     }
 
-    ALWAYS_INLINE void SetCurrentProcess(KProcess *new_process) {
-        impl::GetCurrentContext().current_process = new_process;
-    }
+    ALWAYS_INLINE KProcess *GetCurrentProcessPointer();
+    ALWAYS_INLINE KProcess &GetCurrentProcess();
+
+    ALWAYS_INLINE s32 GetCurrentCoreId();
+
+    ALWAYS_INLINE KScheduler &GetCurrentScheduler();
 
 }

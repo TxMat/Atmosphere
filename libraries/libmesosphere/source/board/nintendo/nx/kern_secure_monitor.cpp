@@ -24,6 +24,10 @@ namespace ams::kern::board::nintendo::nx::smc {
             u64 x[8];
         };
 
+        enum UserFunctionId : u32 {
+            UserFunctionId_SetConfig = 0xC3000401,
+        };
+
         enum FunctionId : u32 {
             FunctionId_CpuSuspend          = 0xC4000001,
             FunctionId_CpuOff              = 0x84000002,
@@ -33,6 +37,9 @@ namespace ams::kern::board::nintendo::nx::smc {
             FunctionId_Panic               = 0xC3000006,
             FunctionId_ConfigureCarveout   = 0xC3000007,
             FunctionId_ReadWriteRegister   = 0xC3000008,
+
+            /* NOTE: Atmosphere extension for mesosphere. This ID is subject to change at any time. */
+            FunctionId_SetConfig           = 0xC3000409,
         };
 
         void CallPrivilegedSecureMonitorFunction(SecureMonitorArguments &args) {
@@ -50,25 +57,31 @@ namespace ams::kern::board::nintendo::nx::smc {
             {
                 /* Disable interrupts while making the call. */
                 KScopedInterruptDisable intr_disable;
-                __asm__ __volatile__("smc #1"
-                                    : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
-                                    :
-                                    : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "cc", "memory"
-                                    );
 
-                /* Restore the CoreLocalRegion into X18. */
-                cpu::SetCoreLocalRegionAddress(cpu::GetTpidrEl1());
+                {
+                    /* Backup the current thread pointer. */
+                    const uintptr_t current_thread_pointer_value = cpu::GetCurrentThreadPointerValue();
+
+                    __asm__ __volatile__("smc #1"
+                                        : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
+                                        :
+                                        : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "cc", "memory"
+                                        );
+
+                    /* Restore the current thread pointer into X18. */
+                    cpu::SetCurrentThreadPointerValue(current_thread_pointer_value);
+
+                    /* Store arguments to output. */
+                    args.x[0] = x0;
+                    args.x[1] = x1;
+                    args.x[2] = x2;
+                    args.x[3] = x3;
+                    args.x[4] = x4;
+                    args.x[5] = x5;
+                    args.x[6] = x6;
+                    args.x[7] = x7;
+                }
             }
-
-            /* Store arguments to output. */
-            args.x[0] = x0;
-            args.x[1] = x1;
-            args.x[2] = x2;
-            args.x[3] = x3;
-            args.x[4] = x4;
-            args.x[5] = x5;
-            args.x[6] = x6;
-            args.x[7] = x7;
         }
 
         void CallUserSecureMonitorFunction(ams::svc::lp64::SecureMonitorArguments *args) {
@@ -86,25 +99,31 @@ namespace ams::kern::board::nintendo::nx::smc {
             {
                 /* Disable interrupts while making the call. */
                 KScopedInterruptDisable intr_disable;
-                __asm__ __volatile__("smc #0"
-                                    : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
-                                    :
-                                    : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "cc", "memory"
-                                    );
 
-                /* Restore the CoreLocalRegion into X18. */
-                cpu::SetCoreLocalRegionAddress(cpu::GetTpidrEl1());
+                {
+                    /* Backup the current thread pointer. */
+                    const uintptr_t current_thread_pointer_value = cpu::GetCurrentThreadPointerValue();
+
+                    __asm__ __volatile__("smc #0"
+                                        : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7)
+                                        :
+                                        : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "cc", "memory"
+                                        );
+
+                    /* Restore the current thread pointer into X18. */
+                    cpu::SetCurrentThreadPointerValue(current_thread_pointer_value);
+
+                    /* Store arguments to output. */
+                    args->r[0] = x0;
+                    args->r[1] = x1;
+                    args->r[2] = x2;
+                    args->r[3] = x3;
+                    args->r[4] = x4;
+                    args->r[5] = x5;
+                    args->r[6] = x6;
+                    args->r[7] = x7;
+                }
             }
-
-            /* Store arguments to output. */
-            args->r[0] = x0;
-            args->r[1] = x1;
-            args->r[2] = x2;
-            args->r[3] = x3;
-            args->r[4] = x4;
-            args->r[5] = x5;
-            args->r[6] = x6;
-            args->r[7] = x7;
         }
 
         void CallPrivilegedSecureMonitorFunctionForInit(SecureMonitorArguments &args) {
@@ -179,13 +198,28 @@ namespace ams::kern::board::nintendo::nx::smc {
 
     }
 
-    void GetConfig(u64 *out, size_t num_qwords, ConfigItem config_item) {
+    bool TryGetConfig(u64 *out, size_t num_qwords, ConfigItem config_item) {
         SecureMonitorArguments args = { FunctionId_GetConfig, static_cast<u32>(config_item) };
         CallPrivilegedSecureMonitorFunction(args);
-        MESOSPHERE_ABORT_UNLESS((static_cast<SmcResult>(args.x[0]) == SmcResult::Success));
+        if (static_cast<SmcResult>(args.x[0]) != SmcResult::Success) {
+            return false;
+        }
+
         for (size_t i = 0; i < num_qwords && i < 7; i++) {
             out[i] = args.x[1 + i];
         }
+
+        return true;
+    }
+
+    void GetConfig(u64 *out, size_t num_qwords, ConfigItem config_item) {
+        MESOSPHERE_ABORT_UNLESS(TryGetConfig(out, num_qwords, config_item));
+    }
+
+    bool SetConfig(ConfigItem config_item, u64 value) {
+        SecureMonitorArguments args = { FunctionId_SetConfig, static_cast<u32>(config_item), 0, value };
+        CallPrivilegedSecureMonitorFunction(args);
+        return static_cast<SmcResult>(args.x[0]) == SmcResult::Success;
     }
 
     bool ReadWriteRegister(u32 *out, ams::svc::PhysicalAddress address, u32 mask, u32 value) {
@@ -197,6 +231,12 @@ namespace ams::kern::board::nintendo::nx::smc {
 
     void ConfigureCarveout(size_t which, uintptr_t address, size_t size) {
         SecureMonitorArguments args = { FunctionId_ConfigureCarveout, static_cast<u64>(which), static_cast<u64>(address), static_cast<u64>(size) };
+        CallPrivilegedSecureMonitorFunction(args);
+        MESOSPHERE_ABORT_UNLESS((static_cast<SmcResult>(args.x[0]) == SmcResult::Success));
+    }
+
+    void CpuOn(u64 core_id, uintptr_t entrypoint, uintptr_t arg) {
+        SecureMonitorArguments args = { FunctionId_CpuOn, core_id, static_cast<u64>(entrypoint), static_cast<u64>(arg) };
         CallPrivilegedSecureMonitorFunction(args);
         MESOSPHERE_ABORT_UNLESS((static_cast<SmcResult>(args.x[0]) == SmcResult::Success));
     }
@@ -221,7 +261,7 @@ namespace ams::kern::board::nintendo::nx::smc {
     void NORETURN Panic(u32 color) {
         SecureMonitorArguments args = { FunctionId_Panic, color };
         CallPrivilegedSecureMonitorFunction(args);
-        while (true) { /* ... */ }
+        AMS_INFINITE_LOOP();
     }
 
     void CallSecureMonitorFromUser(ams::svc::lp64::SecureMonitorArguments *args) {

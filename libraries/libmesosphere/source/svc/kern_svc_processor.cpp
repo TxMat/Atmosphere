@@ -21,20 +21,46 @@ namespace ams::kern::svc {
 
     namespace {
 
+        int32_t GetCurrentProcessorNumber() {
+            /* Setup variables to track affinity information. */
+            s32 current_phys_core;
+            u64 v_affinity_mask   = 0;
 
+            /* Forever try to get the affinity. */
+            while (true) {
+                /* Update affinity information if we've run out. */
+                while (v_affinity_mask == 0) {
+                    current_phys_core = GetCurrentCoreId();
+                    v_affinity_mask   = GetCurrentThread().GetVirtualAffinityMask();
+                    if ((v_affinity_mask & (1ul << current_phys_core)) != 0) {
+                        return current_phys_core;
+                    }
+                }
+
+                /* Check the next virtual bit. */
+                do {
+                    const s32 next_virt_core = static_cast<s32>(__builtin_ctzll(v_affinity_mask));
+                    if (current_phys_core == cpu::VirtualToPhysicalCoreMap[next_virt_core]) {
+                        return next_virt_core;
+                    }
+
+                    v_affinity_mask &= ~(1ul << next_virt_core);
+                } while (v_affinity_mask != 0);
+            }
+        }
 
     }
 
     /* =============================    64 ABI    ============================= */
 
     int32_t GetCurrentProcessorNumber64() {
-        MESOSPHERE_PANIC("Stubbed SvcGetCurrentProcessorNumber64 was called.");
+        return GetCurrentProcessorNumber();
     }
 
     /* ============================= 64From32 ABI ============================= */
 
     int32_t GetCurrentProcessorNumber64From32() {
-        MESOSPHERE_PANIC("Stubbed SvcGetCurrentProcessorNumber64From32 was called.");
+        return GetCurrentProcessorNumber();
     }
 
 }

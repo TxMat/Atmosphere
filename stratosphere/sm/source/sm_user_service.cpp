@@ -13,25 +13,30 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "sm_user_service.hpp"
 #include "impl/sm_service_manager.hpp"
 
 namespace ams::sm {
 
-    Result UserService::Initialize(const sf::ClientProcessId &client_process_id) {
+    UserService::~UserService() {
+        if (this->has_initialized) {
+            impl::OnClientDisconnected(this->process_id);
+        }
+    }
+
+    Result UserService::RegisterClient(const sf::ClientProcessId &client_process_id) {
         this->process_id = client_process_id.GetValue();
         this->has_initialized = true;
         return ResultSuccess();
     }
 
     Result UserService::EnsureInitialized() {
-        if (!this->has_initialized) {
-            return sm::ResultInvalidClient();
-        }
+        R_UNLESS(this->has_initialized, sm::ResultInvalidClient());
         return ResultSuccess();
     }
 
-    Result UserService::GetService(sf::OutMoveHandle out_h, ServiceName service) {
+    Result UserService::GetServiceHandle(sf::OutMoveHandle out_h, ServiceName service) {
         R_TRY(this->EnsureInitialized());
         return impl::GetServiceHandle(out_h.GetHandlePointer(), this->process_id, service);
     }
@@ -44,6 +49,11 @@ namespace ams::sm {
     Result UserService::UnregisterService(ServiceName service) {
         R_TRY(this->EnsureInitialized());
         return impl::UnregisterService(this->process_id, service);
+    }
+
+    Result UserService::DetachClient(const sf::ClientProcessId &client_process_id) {
+        this->has_initialized = false;
+        return ResultSuccess();
     }
 
     Result UserService::AtmosphereInstallMitm(sf::OutMoveHandle srv_h, sf::OutMoveHandle qry_h, ServiceName service) {
@@ -74,6 +84,11 @@ namespace ams::sm {
     Result UserService::AtmosphereDeclareFutureMitm(ServiceName service) {
         R_TRY(this->EnsureInitialized());
         return impl::DeclareFutureMitm(this->process_id, service);
+    }
+
+    Result UserService::AtmosphereClearFutureMitm(ServiceName service) {
+        R_TRY(this->EnsureInitialized());
+        return impl::ClearFutureMitm(this->process_id, service);
     }
 
 

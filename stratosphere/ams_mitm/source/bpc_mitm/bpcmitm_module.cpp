@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "../amsmitm_initialization.hpp"
 #include "bpcmitm_module.hpp"
 #include "bpc_mitm_service.hpp"
@@ -36,9 +37,14 @@ namespace ams::mitm::bpc {
         /* Wait until initialization is complete. */
         mitm::WaitInitialized();
 
+        /* On Mariko, we can't reboot to payload/do exosphere-shutdown...so there is no point in bpc.mitm. */
+        if (spl::GetSocType() == spl::SocType_Mariko) {
+            return;
+        }
+
         /* Create bpc mitm. */
         const sm::ServiceName service_name = (hos::GetVersion() >= hos::Version_2_0_0) ? MitmServiceName : DeprecatedMitmServiceName;
-        R_ABORT_UNLESS(g_server_manager.RegisterMitmServer<BpcMitmService>(service_name));
+        R_ABORT_UNLESS((g_server_manager.RegisterMitmServer<impl::IBpcMitmInterface, BpcMitmService>(service_name)));
 
         /* Loop forever, servicing our services. */
         g_server_manager.LoopProcess();

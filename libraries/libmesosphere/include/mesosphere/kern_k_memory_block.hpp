@@ -155,6 +155,8 @@ namespace ams::kern {
         KMemoryPermission_UserReadExecute   = KMemoryPermission_UserRead | KMemoryPermission_UserExecute,
 
         KMemoryPermission_UserMask          = ams::svc::MemoryPermission_Read | ams::svc::MemoryPermission_Write | ams::svc::MemoryPermission_Execute,
+
+        KMemoryPermission_IpcLockChangeMask = KMemoryPermission_NotMapped | KMemoryPermission_UserReadWrite,
     };
 
     constexpr KMemoryPermission ConvertToKMemoryPermission(ams::svc::MemoryPermission perm) {
@@ -163,24 +165,42 @@ namespace ams::kern {
 
     enum KMemoryAttribute : u8 {
         KMemoryAttribute_None           = 0x00,
-        KMemoryAttribute_UserMask       = 0x7F,
         KMemoryAttribute_All            = 0xFF,
+        KMemoryAttribute_UserMask       = KMemoryAttribute_All,
 
         KMemoryAttribute_Locked         = ams::svc::MemoryAttribute_Locked,
         KMemoryAttribute_IpcLocked      = ams::svc::MemoryAttribute_IpcLocked,
         KMemoryAttribute_DeviceShared   = ams::svc::MemoryAttribute_DeviceShared,
         KMemoryAttribute_Uncached       = ams::svc::MemoryAttribute_Uncached,
+
+        KMemoryAttribute_SetMask        = KMemoryAttribute_Uncached,
+    };
+
+    enum KMemoryBlockDisableMergeAttribute : u8 {
+        KMemoryBlockDisableMergeAttribute_None        = 0,
+        KMemoryBlockDisableMergeAttribute_Normal      = (1u << 0),
+        KMemoryBlockDisableMergeAttribute_DeviceLeft  = (1u << 1),
+        KMemoryBlockDisableMergeAttribute_IpcLeft     = (1u << 2),
+        KMemoryBlockDisableMergeAttribute_Locked      = (1u << 3),
+        KMemoryBlockDisableMergeAttribute_DeviceRight = (1u << 4),
+
+        KMemoryBlockDisableMergeAttribute_AllLeft  = KMemoryBlockDisableMergeAttribute_Normal | KMemoryBlockDisableMergeAttribute_DeviceLeft | KMemoryBlockDisableMergeAttribute_IpcLeft | KMemoryBlockDisableMergeAttribute_Locked,
+        KMemoryBlockDisableMergeAttribute_AllRight = KMemoryBlockDisableMergeAttribute_DeviceRight,
     };
 
     struct KMemoryInfo {
         uintptr_t address;
         size_t size;
         KMemoryState state;
+        u16 device_disable_merge_left_count;
+        u16 device_disable_merge_right_count;
+        u16 ipc_lock_count;
+        u16 device_use_count;
+        u16 ipc_disable_merge_count;
         KMemoryPermission perm;
         KMemoryAttribute  attribute;
         KMemoryPermission original_perm;
-        u16 ipc_lock_count;
-        u16 device_use_count;
+        KMemoryBlockDisableMergeAttribute disable_merge_attribute;
 
         constexpr ams::svc::MemoryInfo GetSvcMemoryInfo() const {
             return {
@@ -191,6 +211,7 @@ namespace ams::kern {
                 .perm             = static_cast<ams::svc::MemoryPermission>(this->perm & KMemoryPermission_UserMask),
                 .ipc_refcount     = this->ipc_lock_count,
                 .device_refcount  = this->device_use_count,
+                .padding          = {},
             };
         }
 
@@ -213,18 +234,50 @@ namespace ams::kern {
         constexpr uintptr_t GetLastAddress() const {
             return this->GetEndAddress() - 1;
         }
+
+        constexpr u16 GetIpcLockCount() const {
+            return this->ipc_lock_count;
+        }
+
+        constexpr u16 GetIpcDisableMergeCount() const {
+            return this->ipc_disable_merge_count;
+        }
+
+        constexpr KMemoryState GetState() const {
+            return this->state;
+        }
+
+        constexpr KMemoryPermission GetPermission() const {
+            return this->perm;
+        }
+
+        constexpr KMemoryPermission GetOriginalPermission() const {
+            return this->original_perm;
+        }
+
+        constexpr KMemoryAttribute GetAttribute() const {
+            return this->attribute;
+        }
+
+        constexpr KMemoryBlockDisableMergeAttribute GetDisableMergeAttribute() const {
+            return this->disable_merge_attribute;
+        }
     };
 
     class KMemoryBlock : public util::IntrusiveRedBlackTreeBaseNode<KMemoryBlock> {
         private:
+            u16 device_disable_merge_left_count;
+            u16 device_disable_merge_right_count;
             KProcessAddress address;
             size_t num_pages;
             KMemoryState memory_state;
             u16 ipc_lock_count;
             u16 device_use_count;
+            u16 ipc_disable_merge_count;
             KMemoryPermission perm;
             KMemoryPermission original_perm;
             KMemoryAttribute attribute;
+            KMemoryBlockDisableMergeAttribute disable_merge_attribute;
         public:
             static constexpr ALWAYS_INLINE int Compare(const KMemoryBlock &lhs, const KMemoryBlock &rhs) {
                 if (lhs.GetAddress() < rhs.GetAddress()) {
@@ -256,27 +309,51 @@ namespace ams::kern {
                 return this->GetEndAddress() - 1;
             }
 
+            constexpr u16 GetIpcLockCount() const {
+                return this->ipc_lock_count;
+            }
+
+            constexpr u16 GetIpcDisableMergeCount() const {
+                return this->ipc_disable_merge_count;
+            }
+
+            constexpr KMemoryPermission GetPermission() const {
+                return this->perm;
+            }
+
+            constexpr KMemoryPermission GetOriginalPermission() const {
+                return this->original_perm;
+            }
+
+            constexpr KMemoryAttribute GetAttribute() const {
+                return this->attribute;
+            }
+
             constexpr KMemoryInfo GetMemoryInfo() const {
                 return {
-                    .address          = GetInteger(this->GetAddress()),
-                    .size             = this->GetSize(),
-                    .state            = this->memory_state,
-                    .perm             = this->perm,
-                    .attribute        = this->attribute,
-                    .original_perm    = this->original_perm,
-                    .ipc_lock_count   = this->ipc_lock_count,
-                    .device_use_count = this->device_use_count,
+                    .address                          = GetInteger(this->GetAddress()),
+                    .size                             = this->GetSize(),
+                    .state                            = this->memory_state,
+                    .device_disable_merge_left_count  = this->device_disable_merge_left_count,
+                    .device_disable_merge_right_count = this->device_disable_merge_right_count,
+                    .ipc_lock_count                   = this->ipc_lock_count,
+                    .device_use_count                 = this->device_use_count,
+                    .ipc_disable_merge_count          = this->ipc_disable_merge_count,
+                    .perm                             = this->perm,
+                    .attribute                        = this->attribute,
+                    .original_perm                    = this->original_perm,
+                    .disable_merge_attribute          = this->disable_merge_attribute,
                 };
             }
         public:
             constexpr KMemoryBlock()
-                : address(), num_pages(), memory_state(KMemoryState_None), ipc_lock_count(), device_use_count(), perm(), original_perm(), attribute()
+                : device_disable_merge_left_count(), device_disable_merge_right_count(), address(), num_pages(), memory_state(KMemoryState_None), ipc_lock_count(), device_use_count(), ipc_disable_merge_count(), perm(), original_perm(), attribute(), disable_merge_attribute()
             {
                 /* ... */
             }
 
             constexpr KMemoryBlock(KProcessAddress addr, size_t np, KMemoryState ms, KMemoryPermission p, KMemoryAttribute attr)
-                : address(addr), num_pages(np), memory_state(ms), ipc_lock_count(0), device_use_count(0), perm(p), original_perm(KMemoryPermission_None), attribute(attr)
+                : device_disable_merge_left_count(), device_disable_merge_right_count(), address(addr), num_pages(np), memory_state(ms), ipc_lock_count(0), device_use_count(0), ipc_disable_merge_count(), perm(p), original_perm(KMemoryPermission_None), attribute(attr), disable_merge_attribute()
             {
                 /* ... */
             }
@@ -310,21 +387,29 @@ namespace ams::kern {
                        this->device_use_count == rhs.device_use_count;
             }
 
+            constexpr bool CanMergeWith(const KMemoryBlock &rhs) const {
+                return this->HasSameProperties(rhs) &&
+                      (this->disable_merge_attribute & KMemoryBlockDisableMergeAttribute_AllRight) == 0 &&
+                      (rhs.disable_merge_attribute & KMemoryBlockDisableMergeAttribute_AllLeft) == 0;
+            }
+
             constexpr bool Contains(KProcessAddress addr) const {
                 MESOSPHERE_ASSERT_THIS();
 
                 return this->GetAddress() <= addr && addr <= this->GetEndAddress();
             }
 
-            constexpr void Add(size_t np) {
+            constexpr void Add(const KMemoryBlock &added_block) {
                 MESOSPHERE_ASSERT_THIS();
-                MESOSPHERE_ASSERT(np > 0);
-                MESOSPHERE_ASSERT(this->GetAddress() + np * PageSize - 1 < this->GetEndAddress() + np * PageSize - 1);
+                MESOSPHERE_ASSERT(added_block.GetNumPages() > 0);
+                MESOSPHERE_ASSERT(this->GetAddress() + added_block.GetSize() - 1 < this->GetEndAddress() + added_block.GetSize() - 1);
 
-                this->num_pages += np;
+                this->num_pages += added_block.GetNumPages();
+                this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute | added_block.disable_merge_attribute);
+                this->device_disable_merge_right_count = added_block.device_disable_merge_right_count;
             }
 
-            constexpr void Update(KMemoryState s, KMemoryPermission p, KMemoryAttribute a) {
+            constexpr void Update(KMemoryState s, KMemoryPermission p, KMemoryAttribute a, bool set_disable_merge_attr, u8 set_mask, u8 clear_mask) {
                 MESOSPHERE_ASSERT_THIS();
                 MESOSPHERE_ASSERT(this->original_perm == KMemoryPermission_None);
                 MESOSPHERE_ASSERT((this->attribute & KMemoryAttribute_IpcLocked) == 0);
@@ -332,6 +417,13 @@ namespace ams::kern {
                 this->memory_state = s;
                 this->perm         = p;
                 this->attribute    = static_cast<KMemoryAttribute>(a | (this->attribute & (KMemoryAttribute_IpcLocked | KMemoryAttribute_DeviceShared)));
+
+                if (set_disable_merge_attr && set_mask != 0) {
+                    this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute | set_mask);
+                }
+                if (clear_mask != 0) {
+                    this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute & ~clear_mask);
+                }
             }
 
             constexpr void Split(KMemoryBlock *block, KProcessAddress addr) {
@@ -340,17 +432,199 @@ namespace ams::kern {
                 MESOSPHERE_ASSERT(this->Contains(addr));
                 MESOSPHERE_ASSERT(util::IsAligned(GetInteger(addr), PageSize));
 
-                block->address          = this->address;
-                block->num_pages        = (addr - this->GetAddress()) / PageSize;
-                block->memory_state     = this->memory_state;
-                block->ipc_lock_count   = this->ipc_lock_count;
-                block->device_use_count = this->device_use_count;
-                block->perm             = this->perm;
-                block->original_perm    = this->original_perm;
-                block->attribute        = this->attribute;
+                block->address                          = this->address;
+                block->num_pages                        = (addr - this->GetAddress()) / PageSize;
+                block->memory_state                     = this->memory_state;
+                block->ipc_lock_count                   = this->ipc_lock_count;
+                block->device_use_count                 = this->device_use_count;
+                block->perm                             = this->perm;
+                block->original_perm                    = this->original_perm;
+                block->attribute                        = this->attribute;
+                block->disable_merge_attribute          = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute & KMemoryBlockDisableMergeAttribute_AllLeft);
+                block->ipc_disable_merge_count          = this->ipc_disable_merge_count;
+                block->device_disable_merge_left_count  = this->device_disable_merge_left_count;
+                block->device_disable_merge_right_count = 0;
 
                 this->address = addr;
                 this->num_pages -= block->num_pages;
+
+                this->ipc_disable_merge_count         = 0;
+                this->device_disable_merge_left_count = 0;
+                this->disable_merge_attribute         = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute & KMemoryBlockDisableMergeAttribute_AllRight);
+            }
+
+            constexpr void UpdateDeviceDisableMergeStateForShareLeft(KMemoryPermission new_perm, bool left, bool right) {
+                /* New permission/right aren't used. */
+                MESOSPHERE_UNUSED(new_perm, right);
+
+                if (left) {
+                    this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute | KMemoryBlockDisableMergeAttribute_DeviceLeft);
+                    const u16 new_device_disable_merge_left_count = ++this->device_disable_merge_left_count;
+                    MESOSPHERE_ABORT_UNLESS(new_device_disable_merge_left_count > 0);
+                }
+            }
+
+            constexpr void UpdateDeviceDisableMergeStateForShareRight(KMemoryPermission new_perm, bool left, bool right) {
+                /* New permission/left aren't used. */
+                MESOSPHERE_UNUSED(new_perm, left);
+
+                if (right) {
+                    this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute | KMemoryBlockDisableMergeAttribute_DeviceRight);
+                    const u16 new_device_disable_merge_right_count = ++this->device_disable_merge_right_count;
+                    MESOSPHERE_ABORT_UNLESS(new_device_disable_merge_right_count > 0);
+                }
+            }
+
+            constexpr void UpdateDeviceDisableMergeStateForShare(KMemoryPermission new_perm, bool left, bool right) {
+                this->UpdateDeviceDisableMergeStateForShareLeft(new_perm, left, right);
+                this->UpdateDeviceDisableMergeStateForShareRight(new_perm, left, right);
+            }
+
+            constexpr void ShareToDevice(KMemoryPermission new_perm, bool left, bool right) {
+                /* New permission isn't used. */
+                MESOSPHERE_UNUSED(new_perm);
+
+                /* We must either be shared or have a zero lock count. */
+                MESOSPHERE_ASSERT((this->attribute & KMemoryAttribute_DeviceShared) == KMemoryAttribute_DeviceShared || this->device_use_count == 0);
+
+                /* Share. */
+                const u16 new_count = ++this->device_use_count;
+                MESOSPHERE_ABORT_UNLESS(new_count > 0);
+
+                this->attribute = static_cast<KMemoryAttribute>(this->attribute | KMemoryAttribute_DeviceShared);
+
+                this->UpdateDeviceDisableMergeStateForShare(new_perm, left, right);
+            }
+
+            constexpr void UpdateDeviceDisableMergeStateForUnshareLeft(KMemoryPermission new_perm, bool left, bool right) {
+                /* New permission/right aren't used. */
+                MESOSPHERE_UNUSED(new_perm, right);
+
+                if (left) {
+                    if (!this->device_disable_merge_left_count) {
+                        return;
+                    }
+                    --this->device_disable_merge_left_count;
+                }
+
+                this->device_disable_merge_left_count = std::min(this->device_disable_merge_left_count, this->device_use_count);
+
+                if (this->device_disable_merge_left_count == 0) {
+                    this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute & ~KMemoryBlockDisableMergeAttribute_DeviceLeft);
+                }
+            }
+
+            constexpr void UpdateDeviceDisableMergeStateForUnshareRight(KMemoryPermission new_perm, bool left, bool right) {
+                /* New permission/left aren't used. */
+                MESOSPHERE_UNUSED(new_perm, left);
+
+                if (right) {
+                    const u16 old_device_disable_merge_right_count = this->device_disable_merge_right_count--;
+                    MESOSPHERE_ASSERT(old_device_disable_merge_right_count > 0);
+                    if (old_device_disable_merge_right_count == 1) {
+                        this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute & ~KMemoryBlockDisableMergeAttribute_DeviceRight);
+                    }
+                }
+            }
+
+            constexpr void UpdateDeviceDisableMergeStateForUnshare(KMemoryPermission new_perm, bool left, bool right) {
+                this->UpdateDeviceDisableMergeStateForUnshareLeft(new_perm, left, right);
+                this->UpdateDeviceDisableMergeStateForUnshareRight(new_perm, left, right);
+            }
+
+            constexpr void UnshareToDevice(KMemoryPermission new_perm, bool left, bool right) {
+                /* New permission isn't used. */
+                MESOSPHERE_UNUSED(new_perm);
+
+                /* We must be shared. */
+                MESOSPHERE_ASSERT((this->attribute & KMemoryAttribute_DeviceShared) == KMemoryAttribute_DeviceShared);
+
+                /* Unhare. */
+                const u16 old_count = this->device_use_count--;
+                MESOSPHERE_ABORT_UNLESS(old_count > 0);
+
+                if (old_count == 1) {
+                    this->attribute = static_cast<KMemoryAttribute>(this->attribute & ~KMemoryAttribute_DeviceShared);
+                }
+
+                this->UpdateDeviceDisableMergeStateForUnshare(new_perm, left, right);
+            }
+
+            constexpr void UnshareToDeviceRight(KMemoryPermission new_perm, bool left, bool right) {
+                /* New permission isn't used. */
+                MESOSPHERE_UNUSED(new_perm);
+
+                /* We must be shared. */
+                MESOSPHERE_ASSERT((this->attribute & KMemoryAttribute_DeviceShared) == KMemoryAttribute_DeviceShared);
+
+                /* Unhare. */
+                const u16 old_count = this->device_use_count--;
+                MESOSPHERE_ABORT_UNLESS(old_count > 0);
+
+                if (old_count == 1) {
+                    this->attribute = static_cast<KMemoryAttribute>(this->attribute & ~KMemoryAttribute_DeviceShared);
+                }
+
+                this->UpdateDeviceDisableMergeStateForUnshareRight(new_perm, left, right);
+            }
+
+            constexpr void LockForIpc(KMemoryPermission new_perm, bool left, bool right) {
+                /* We must either be locked or have a zero lock count. */
+                MESOSPHERE_ASSERT((this->attribute & KMemoryAttribute_IpcLocked) == KMemoryAttribute_IpcLocked || this->ipc_lock_count == 0);
+
+                /* Lock. */
+                const u16 new_lock_count = ++this->ipc_lock_count;
+                MESOSPHERE_ABORT_UNLESS(new_lock_count > 0);
+
+                /* If this is our first lock, update our permissions. */
+                if (new_lock_count == 1) {
+                    MESOSPHERE_ASSERT(this->original_perm == KMemoryPermission_None);
+                    MESOSPHERE_ASSERT((this->perm | new_perm | KMemoryPermission_NotMapped) == (this->perm | KMemoryPermission_NotMapped));
+                    MESOSPHERE_ASSERT((this->perm & KMemoryPermission_UserExecute) != KMemoryPermission_UserExecute || (new_perm == KMemoryPermission_UserRead));
+                    this->original_perm = this->perm;
+                    this->perm          = static_cast<KMemoryPermission>((new_perm & KMemoryPermission_IpcLockChangeMask) | (this->original_perm & ~KMemoryPermission_IpcLockChangeMask));
+                }
+                this->attribute = static_cast<KMemoryAttribute>(this->attribute | KMemoryAttribute_IpcLocked);
+
+                if (left) {
+                    this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute | KMemoryBlockDisableMergeAttribute_IpcLeft);
+                    const u16 new_ipc_disable_merge_count = ++this->ipc_disable_merge_count;
+                    MESOSPHERE_ABORT_UNLESS(new_ipc_disable_merge_count > 0);
+                }
+                MESOSPHERE_UNUSED(right);
+            }
+
+            constexpr void UnlockForIpc(KMemoryPermission new_perm, bool left, bool right) {
+                /* New permission isn't used. */
+                MESOSPHERE_UNUSED(new_perm);
+
+                /* We must be locked. */
+                MESOSPHERE_ASSERT((this->attribute & KMemoryAttribute_IpcLocked) == KMemoryAttribute_IpcLocked);
+
+                /* Unlock. */
+                const u16 old_lock_count = this->ipc_lock_count--;
+                MESOSPHERE_ABORT_UNLESS(old_lock_count > 0);
+
+                /* If this is our last unlock, update our permissions. */
+                if (old_lock_count == 1) {
+                    MESOSPHERE_ASSERT(this->original_perm != KMemoryPermission_None);
+                    this->perm          = this->original_perm;
+                    this->original_perm = KMemoryPermission_None;
+                    this->attribute = static_cast<KMemoryAttribute>(this->attribute & ~KMemoryAttribute_IpcLocked);
+                }
+
+                if (left) {
+                    const u16 old_ipc_disable_merge_count = this->ipc_disable_merge_count--;
+                    MESOSPHERE_ASSERT(old_ipc_disable_merge_count > 0);
+                    if (old_ipc_disable_merge_count == 1) {
+                        this->disable_merge_attribute = static_cast<KMemoryBlockDisableMergeAttribute>(this->disable_merge_attribute & ~KMemoryBlockDisableMergeAttribute_IpcLeft);
+                    }
+                }
+                MESOSPHERE_UNUSED(right);
+            }
+
+            constexpr KMemoryBlockDisableMergeAttribute GetDisableMergeAttribute() const {
+                return this->disable_merge_attribute;
             }
     };
     static_assert(std::is_trivially_destructible<KMemoryBlock>::value);

@@ -33,8 +33,6 @@ namespace ams::kern {
         NON_COPYABLE(KScheduler);
         NON_MOVEABLE(KScheduler);
         public:
-            using LockType = KAbstractSchedulerLock<KScheduler>;
-
             static constexpr s32 HighestCoreMigrationAllowedPriority = 2;
             static_assert(ams::svc::LowestThreadPriority  >= HighestCoreMigrationAllowedPriority);
             static_assert(ams::svc::HighestThreadPriority <= HighestCoreMigrationAllowedPriority);
@@ -50,9 +48,7 @@ namespace ams::kern {
         private:
             friend class KScopedSchedulerLock;
             friend class KScopedSchedulerLockAndSleep;
-            static bool s_scheduler_update_needed;
-            static LockType s_scheduler_lock;
-            static KSchedulerPriorityQueue s_priority_queue;
+            friend class KScopedDisableDispatch;
         private:
             SchedulingState state;
             bool is_active;
@@ -60,9 +56,10 @@ namespace ams::kern {
             KThread *prev_thread;
             s64 last_context_switch_time;
             KThread *idle_thread;
+            std::atomic<KThread *> current_thread;
         public:
             constexpr KScheduler()
-                : state(), is_active(false), core_id(0), prev_thread(nullptr), last_context_switch_time(0), idle_thread(nullptr)
+                : state(), is_active(false), core_id(0), prev_thread(nullptr), last_context_switch_time(0), idle_thread(nullptr), current_thread(nullptr)
             {
                 this->state.needs_scheduling = true;
                 this->state.interrupt_task_thread_runnable = false;
@@ -75,27 +72,52 @@ namespace ams::kern {
             NOINLINE void Initialize(KThread *idle_thread);
             NOINLINE void Activate();
 
+            ALWAYS_INLINE void SetInterruptTaskRunnable() {
+                this->state.interrupt_task_thread_runnable = true;
+                this->state.needs_scheduling               = true;
+            }
+
             ALWAYS_INLINE void RequestScheduleOnInterrupt() {
-                SetSchedulerUpdateNeeded();
+                this->state.needs_scheduling = true;
 
                 if (CanSchedule()) {
                     this->ScheduleOnInterrupt();
                 }
             }
+
+            ALWAYS_INLINE u64 GetIdleCount() const {
+                return this->state.idle_count;
+            }
+
+            ALWAYS_INLINE KThread *GetIdleThread() const {
+                return this->idle_thread;
+            }
+
+            ALWAYS_INLINE KThread *GetPreviousThread() const {
+                return this->prev_thread;
+            }
+
+            ALWAYS_INLINE KThread *GetSchedulerCurrentThread() const {
+                return this->current_thread;
+            }
+
+            ALWAYS_INLINE s64 GetLastContextSwitchTime() const {
+                return this->last_context_switch_time;
+            }
         private:
             /* Static private API. */
-            static ALWAYS_INLINE bool IsSchedulerUpdateNeeded() { return s_scheduler_update_needed; }
-            static ALWAYS_INLINE void SetSchedulerUpdateNeeded() { s_scheduler_update_needed = true; }
-            static ALWAYS_INLINE void ClearSchedulerUpdateNeeded() { s_scheduler_update_needed = false; }
             static ALWAYS_INLINE KSchedulerPriorityQueue &GetPriorityQueue() { return s_priority_queue; }
-
             static NOINLINE u64 UpdateHighestPriorityThreadsImpl();
+
+            static NOINLINE void InterruptTaskThreadToRunnable();
         public:
             /* Static public API. */
             static ALWAYS_INLINE bool CanSchedule() { return GetCurrentThread().GetDisableDispatchCount() == 0; }
             static ALWAYS_INLINE bool IsSchedulerLockedByCurrentThread() { return s_scheduler_lock.IsLockedByCurrentThread(); }
 
-            static NOINLINE void SetInterruptTaskThreadRunnable();
+            static ALWAYS_INLINE bool IsSchedulerUpdateNeeded() { return s_scheduler_update_needed; }
+            static ALWAYS_INLINE void SetSchedulerUpdateNeeded() { s_scheduler_update_needed = true; }
+            static ALWAYS_INLINE void ClearSchedulerUpdateNeeded() { s_scheduler_update_needed = false; }
 
             static ALWAYS_INLINE void DisableScheduling() {
                 MESOSPHERE_ASSERT(GetCurrentThread().GetDisableDispatchCount() >= 0);
@@ -121,12 +143,17 @@ namespace ams::kern {
                 }
             }
 
+            static NOINLINE void ClearPreviousThread(KThread *thread);
+
             static NOINLINE void OnThreadStateChanged(KThread *thread, KThread::ThreadState old_state);
             static NOINLINE void OnThreadPriorityChanged(KThread *thread, s32 old_priority);
             static NOINLINE void OnThreadAffinityMaskChanged(KThread *thread, const KAffinityMask &old_affinity, s32 old_core);
 
-            /* TODO: Yield operations */
             static NOINLINE void RotateScheduledQueue(s32 priority, s32 core_id);
+
+            static NOINLINE void YieldWithoutCoreMigration();
+            static NOINLINE void YieldWithCoreMigration();
+            static NOINLINE void YieldToAnyThread();
         private:
             /* Instanced private API. */
             void ScheduleImpl();
@@ -140,8 +167,9 @@ namespace ams::kern {
             }
 
             ALWAYS_INLINE void ScheduleOnInterrupt() {
-                KScopedDisableDispatch dd;
+                GetCurrentThread().DisableDispatch();
                 this->Schedule();
+                GetCurrentThread().EnableDispatch();
             }
 
             void RescheduleOtherCores(u64 cores_needing_scheduling);
@@ -160,6 +188,12 @@ namespace ams::kern {
             }
 
             NOINLINE u64 UpdateHighestPriorityThread(KThread *thread);
+        public:
+            using LockType = KAbstractSchedulerLock<KScheduler>;
+        private:
+            static bool s_scheduler_update_needed;
+            static KSchedulerPriorityQueue s_priority_queue;
+            static LockType s_scheduler_lock;
     };
 
     class KScopedSchedulerLock : KScopedLock<KScheduler::LockType> {

@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "fatal_repair.hpp"
 #include "fatal_service_for_self.hpp"
 
@@ -32,22 +33,21 @@ namespace ams::fatal::srv {
 
         bool IsInRepairWithoutVolHeld() {
             if (IsInRepair()) {
-                GpioPadSession vol_btn;
-                if (R_FAILED(gpioOpenSession(&vol_btn, GpioPadName_ButtonVolUp))) {
+                gpio::GpioPadSession vol_btn;
+                if (R_FAILED(gpio::OpenSession(std::addressof(vol_btn), gpio::DeviceCode_ButtonVolUp))) {
                     return true;
                 }
 
                 /* Ensure we close even on early return. */
-                ON_SCOPE_EXIT { gpioPadClose(&vol_btn); };
+                ON_SCOPE_EXIT { gpio::CloseSession(std::addressof(vol_btn)); };
 
                 /* Set direction input. */
-                gpioPadSetDirection(&vol_btn, GpioDirection_Input);
+                gpio::SetDirection(std::addressof(vol_btn), gpio::Direction_Input);
 
                 /* Ensure that we're holding the volume button for a full second. */
                 auto start = os::GetSystemTick();
                 do {
-                    GpioValue val;
-                    if (R_FAILED(gpioPadGetValue(&vol_btn, &val)) || val != GpioValue_Low) {
+                    if (gpio::GetValue(std::addressof(vol_btn)) != gpio::GpioValue_Low) {
                         return true;
                     }
 

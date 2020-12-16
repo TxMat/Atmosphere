@@ -13,7 +13,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 #include <stratosphere.hpp>
 #include "ams_bpc.h"
 
@@ -41,7 +40,7 @@ namespace ams {
     }
 
     void SetInitialRebootPayload(const void *src, size_t src_size) {
-        R_ABORT_UNLESS(amsBpcSetInitialPayload(src, src_size));
+        R_ABORT_UNLESS(amsBpcSetRebootPayload(src, src_size));
     }
 
     void WEAK_SYMBOL ExceptionHandler(FatalErrorContext *ctx) {
@@ -75,14 +74,32 @@ namespace ams {
             ams_ctx.pc = ctx->pc.x;
             ams_ctx.pstate = ctx->pstate;
             ams_ctx.afsr0 = ctx->afsr0;
-            ams_ctx.afsr1 = ctx->afsr1;
+            ams_ctx.afsr1 = (static_cast<u64>(::ams::exosphere::GetVersion(ATMOSPHERE_RELEASE_VERSION)) << 32) | static_cast<u64>(hos::GetVersion());
+            if (svc::IsKernelMesosphere()) {
+                ams_ctx.afsr1 |= (static_cast<u64>('M') << (BITSIZEOF(u64) - BITSIZEOF(u8)));
+            }
             ams_ctx.far = ctx->far.x;
             ams_ctx.report_identifier = armGetSystemTick();
+
+            /* Detect stack overflow. */
+            if (ams_ctx.error_desc == FatalErrorContext::DataAbortErrorDesc) {
+                svc::lp64::MemoryInfo mem_info;
+                svc::PageInfo page_info;
+
+                if (/* Check if stack pointer is in guard page. */
+                    R_SUCCEEDED(svc::QueryMemory(std::addressof(mem_info), std::addressof(page_info), ams_ctx.sp)) &&
+                    mem_info.state == svc::MemoryState_Free &&
+                    /* Check if stack pointer fell off stack. */
+                    R_SUCCEEDED(svc::QueryMemory(std::addressof(mem_info), std::addressof(page_info), ams_ctx.sp + 0x1000)) &&
+                    mem_info.state == svc::MemoryState_Stack) {
+                    ams_ctx.error_desc = FatalErrorContext::StackOverflowErrorDesc;
+                }
+            }
             /* Grab module base. */
             {
-                MemoryInfo mem_info;
-                u32 page_info;
-                if (R_SUCCEEDED(svcQueryMemory(&mem_info, &page_info, GetPc()))) {
+                svc::lp64::MemoryInfo mem_info;
+                svc::PageInfo page_info;
+                if (R_SUCCEEDED(svc::QueryMemory(std::addressof(mem_info), std::addressof(page_info), GetPc()))) {
                     ams_ctx.module_base = mem_info.addr;
                 } else {
                     ams_ctx.module_base = 0;
@@ -98,9 +115,9 @@ namespace ams {
 
                 /* Read a new frame. */
                 StackFrame cur_frame;
-                MemoryInfo mem_info;
-                u32 page_info;
-                if (R_SUCCEEDED(svcQueryMemory(&mem_info, &page_info, cur_fp)) && (mem_info.perm & Perm_R) == Perm_R) {
+                svc::lp64::MemoryInfo mem_info;
+                svc::PageInfo page_info;
+                if (R_SUCCEEDED(svc::QueryMemory(std::addressof(mem_info), std::addressof(page_info), cur_fp)) && (mem_info.perm & Perm_R) == Perm_R) {
                     std::memcpy(&cur_frame, reinterpret_cast<void *>(cur_fp), sizeof(cur_frame));
                 } else {
                     break;
@@ -117,9 +134,9 @@ namespace ams {
 
             /* Grab up to 0x100 of stack. */
             {
-                MemoryInfo mem_info;
-                u32 page_info;
-                if (R_SUCCEEDED(svcQueryMemory(&mem_info, &page_info, ams_ctx.sp)) && (mem_info.perm & Perm_R) == Perm_R) {
+                svc::lp64::MemoryInfo mem_info;
+                svc::PageInfo page_info;
+                if (R_SUCCEEDED(svc::QueryMemory(std::addressof(mem_info), std::addressof(page_info), ams_ctx.sp)) && (mem_info.perm & Perm_R) == Perm_R) {
                     size_t copy_size = std::min(FatalErrorContext::MaxStackDumpSize, static_cast<size_t>(mem_info.addr + mem_info.size - ams_ctx.sp));
                     ams_ctx.stack_dump_size = copy_size;
                     std::memcpy(ams_ctx.stack_dump, reinterpret_cast<void *>(ams_ctx.sp), copy_size);
@@ -182,6 +199,9 @@ extern "C" {
 
 /* Custom abort handler, so that std::abort will trigger these. */
 void abort() {
+    static ams::os::Mutex abort_lock(true);
+    std::scoped_lock lk(abort_lock);
+
     ams::AbortImpl();
     __builtin_unreachable();
 }

@@ -13,24 +13,17 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "boot_fan_enable.hpp"
-
-#include "gpio/gpio_utils.hpp"
 
 namespace ams::boot {
 
-    namespace {
-
-        /* Convenience definitions. */
-        constexpr u32 GpioPadName_FanEnable = 0x4B;
-
-    }
-
-    void SetFanEnabled() {
+    void SetFanPowerEnabled() {
         if (spl::GetHardwareType() == spl::HardwareType::Copper) {
-            gpio::Configure(GpioPadName_FanEnable);
-            gpio::SetDirection(GpioPadName_FanEnable, GpioDirection_Output);
-            gpio::SetValue(GpioPadName_FanEnable, GpioValue_High);
+            /* TODO */
+            /* boot::gpio::Configure(GpioPadName_FanEnable);                          */
+            /* boot::gpio::SetDirection(GpioPadName_FanEnable, GpioDirection_Output); */
+            /* boot::gpio::SetValue(GpioPadName_FanEnable, GpioValue_High);           */
         }
     }
 

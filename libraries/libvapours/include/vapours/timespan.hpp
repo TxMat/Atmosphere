@@ -31,7 +31,7 @@ namespace ams {
             static constexpr ALWAYS_INLINE TimeSpanType FromSeconds(s64 s)       { return FromMilliSeconds(s * INT64_C(1000)); }
             static constexpr ALWAYS_INLINE TimeSpanType FromMinutes(s64 m)       { return FromSeconds(m * INT64_C(60)); }
             static constexpr ALWAYS_INLINE TimeSpanType FromHours(s64 h)         { return FromMinutes(h * INT64_C(60)); }
-            static constexpr ALWAYS_INLINE TimeSpanType FromDays(s64 d)          { return FromMinutes(d * INT64_C(24)); }
+            static constexpr ALWAYS_INLINE TimeSpanType FromDays(s64 d)          { return FromHours(d * INT64_C(24)); }
 
             constexpr ALWAYS_INLINE s64 GetNanoSeconds()  const { return this->ns; }
             constexpr ALWAYS_INLINE s64 GetMicroSeconds() const { return this->GetNanoSeconds() / (INT64_C(1000)); }
@@ -61,7 +61,7 @@ namespace ams {
         private:
             TimeSpanType ts;
         public:
-            constexpr ALWAYS_INLINE TimeSpan(ZeroTag z = nullptr) : ts(TimeSpanType::FromNanoSeconds(0)) { /* ... */ }
+            constexpr ALWAYS_INLINE TimeSpan(ZeroTag z = nullptr) : ts(TimeSpanType::FromNanoSeconds(0)) { AMS_UNUSED(z); /* ... */ }
             constexpr ALWAYS_INLINE TimeSpan(const TimeSpanType &t) : ts(t) { /* ... */ }
 
             template<typename R, typename P>
@@ -95,6 +95,10 @@ namespace ams {
 
             constexpr ALWAYS_INLINE friend TimeSpan operator+(const TimeSpan &lhs, const TimeSpan &rhs) { TimeSpan r(lhs); return r += rhs; }
             constexpr ALWAYS_INLINE friend TimeSpan operator-(const TimeSpan &lhs, const TimeSpan &rhs) { TimeSpan r(lhs); return r -= rhs; }
+
+            constexpr ALWAYS_INLINE operator TimeSpanType() const {
+                return this->ts;
+            }
     };
 
 }

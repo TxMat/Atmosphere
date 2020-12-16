@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "../amsmitm_initialization.hpp"
 #include "setmitm_module.hpp"
 #include "set_mitm_service.hpp"
@@ -42,8 +43,8 @@ namespace ams::mitm::settings {
         mitm::WaitInitialized();
 
         /* Create mitm servers. */
-        R_ABORT_UNLESS(g_server_manager.RegisterMitmServer<SetMitmService>(SetMitmServiceName));
-        R_ABORT_UNLESS(g_server_manager.RegisterMitmServer<SetSysMitmService>(SetSysMitmServiceName));
+        R_ABORT_UNLESS((g_server_manager.RegisterMitmServer<ISetMitmInterface, SetMitmService>(SetMitmServiceName)));
+        R_ABORT_UNLESS((g_server_manager.RegisterMitmServer<ISetSysMitmInterface, SetSysMitmService>(SetSysMitmServiceName)));
 
         /* Loop forever, servicing our services. */
         g_server_manager.LoopProcess();

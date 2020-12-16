@@ -64,6 +64,10 @@ namespace ams::mitm {
         /* Emummc file protection. */
         FsFile g_emummc_file;
 
+        /* Maintain exclusive access to the fusee-secondary archive. */
+        FsFile g_secondary_file;
+        FsFile g_sept_payload_file;
+
         constexpr inline bool IsHexadecimal(const char *str) {
             while (*str) {
                 if (std::isxdigit(static_cast<unsigned char>(*str))) {
@@ -96,7 +100,7 @@ namespace ams::mitm {
             {
                 u64 key_generation = 0;
                 if (hos::GetVersion() >= hos::Version_5_0_0) {
-                    R_ABORT_UNLESS(splGetConfig(SplConfigItem_NewKeyGeneration, &key_generation));
+                    R_ABORT_UNLESS(spl::GetConfig(std::addressof(key_generation), spl::ConfigItem::DeviceUniqueKeyGeneration));
                 }
 
                 u8 bis_keys[4][2][0x10];
@@ -107,15 +111,15 @@ namespace ams::mitm {
                 for (size_t partition = 0; partition < 4; partition++) {
                     if (partition == 0) {
                         for (size_t i = 0; i < 2; i++) {
-                            R_ABORT_UNLESS(splFsGenerateSpecificAesKey(BisKeySources[partition][i], key_generation, i, bis_keys[partition][i]));
+                            R_ABORT_UNLESS(spl::GenerateSpecificAesKey(bis_keys[partition][i], 0x10, BisKeySources[partition][i], 0x10, key_generation, i));
                         }
                     } else {
                         const u32 option = (partition == 3 && spl::IsRecoveryBoot()) ? 0x4 : 0x1;
 
-                        u8 access_key[0x10];
-                        R_ABORT_UNLESS(splCryptoGenerateAesKek(BisKekSource, key_generation, option, access_key));
+                        spl::AccessKey access_key;
+                        R_ABORT_UNLESS(spl::GenerateAesKek(std::addressof(access_key), BisKekSource, 0x10, key_generation, option));
                         for (size_t i = 0; i < 2; i++) {
-                            R_ABORT_UNLESS(splCryptoGenerateAesKey(access_key, BisKeySources[partition][i], bis_keys[partition][i]));
+                            R_ABORT_UNLESS(spl::GenerateAesKey(bis_keys[partition][i], 0x10, access_key, BisKeySources[partition][i], 0x10));
                         }
                     }
                 }
@@ -129,6 +133,15 @@ namespace ams::mitm {
                 R_ABORT_UNLESS(fsFileWrite(&g_bis_key_file, 0, bis_keys, sizeof(bis_keys), FsWriteOption_Flush));
                 /* NOTE: g_bis_key_file is intentionally not closed here.  This prevents any other process from opening it. */
             }
+
+            /* Open a reference to the fusee-secondary archive. */
+            /* As upcoming/current atmosphere releases will contain more than one zip which users much choose between, */
+            /* maintaining an open reference prevents cleanly the issue of "automatic" updaters selecting the incorrect */
+            /* zip, and encourages good updating hygiene -- atmosphere should not be updated on SD while HOS is alive. */
+            {
+                R_ABORT_UNLESS(mitm::fs::OpenSdFile(std::addressof(g_secondary_file),    "/atmosphere/fusee-secondary.bin", ams::fs::OpenMode_Read));
+                R_ABORT_UNLESS(mitm::fs::OpenSdFile(std::addressof(g_sept_payload_file), "/sept/payload.bin",               ams::fs::OpenMode_Read));
+            }
         }
 
         /* Initialization implementation */
@@ -138,6 +151,9 @@ namespace ams::mitm {
 
             /* Open global SD card file system, so that other threads can begin using the SD. */
             mitm::fs::OpenGlobalSdCardFileSystem();
+
+            /* Mount the sd card at a convenient mountpoint. */
+            ams::fs::MountSdCard(ams::fs::impl::SdCardFileSystemMountName);
 
             /* Initialize the reboot manager (load a payload off the SD). */
             /* Discard result, since it doesn't need to succeed. */
@@ -157,6 +173,7 @@ namespace ams::mitm {
 
             /* Connect to set:sys. */
             sm::DoWithSession([]() {
+                R_ABORT_UNLESS(setInitialize());
                 R_ABORT_UNLESS(setsysInitialize());
             });
 

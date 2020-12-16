@@ -13,7 +13,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "impl/os_interrupt_event_impl.hpp"
+#include "impl/os_waitable_holder_impl.hpp"
 #include "impl/os_waitable_object_list.hpp"
 
 namespace ams::os {
@@ -58,6 +60,14 @@ namespace ams::os {
     void ClearInterruptEvent(InterruptEventType *event) {
         AMS_ASSERT(event->state == InterruptEventType::State_Initialized);
         return GetReference(event->impl).Clear();
+    }
+
+    void InitializeWaitableHolder(WaitableHolderType *waitable_holder, InterruptEventType *event) {
+        AMS_ASSERT(event->state == InterruptEventType::State_Initialized);
+
+        new (GetPointer(waitable_holder->impl_storage)) impl::WaitableHolderOfInterruptEvent(event);
+
+        waitable_holder->user_data = 0;
     }
 
 }

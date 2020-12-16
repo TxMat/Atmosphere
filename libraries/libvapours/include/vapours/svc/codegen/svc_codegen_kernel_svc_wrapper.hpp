@@ -20,7 +20,7 @@ namespace ams::svc::codegen {
 
 #if defined(ATMOSPHERE_ARCH_ARM64) || defined(ATMOSPHERE_ARCH_ARM)
 
-    template<auto Function64, auto Function64From32>
+    template<auto &Function64, auto &Function64From32>
     class KernelSvcWrapper {
         private:
             /* TODO: using Aarch32 = */
@@ -29,14 +29,26 @@ namespace ams::svc::codegen {
         public:
 /* Set omit-frame-pointer to prevent GCC from emitting MOV X29, SP instructions. */
 #pragma GCC push_options
+#pragma GCC optimize ("-O2")
 #pragma GCC optimize ("omit-frame-pointer")
 
             static ALWAYS_INLINE void Call64() {
-                Aarch64::WrapSvcFunction();
+                if constexpr (std::is_same<typename Aarch64::ReturnType, void>::value) {
+                    Aarch64::WrapSvcFunction();
+                } else {
+                    const auto &res = Aarch64::WrapSvcFunction();
+                    __asm__ __volatile__("" :: [res]"r"(res));
+                }
+
             }
 
             static ALWAYS_INLINE void Call64From32() {
-                Aarch64From32::WrapSvcFunction();
+                if constexpr (std::is_same<typename Aarch64::ReturnType, void>::value) {
+                    Aarch64From32::WrapSvcFunction();
+                } else {
+                    const auto &res = Aarch64From32::WrapSvcFunction();
+                    __asm__ __volatile__("" :: [res]"r"(res));
+                }
             }
 
 #pragma GCC pop_options

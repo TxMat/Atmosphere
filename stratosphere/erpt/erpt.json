@@ -10,11 +10,12 @@
 	"is_retail":	true,
 	"pool_partition":	2,
 	"is_64_bit":	true,
-	"address_space_type":	1,
+	"address_space_type":	3,
+    "disable_device_address_space_merge":    true,
 	"filesystem_access":	{
 		"permissions":	"0xFFFFFFFFFFFFFFFF"
 	},
-	"service_access":	["lm", "fsp-srv", "time:u", "set", "set:sys", "srepo:u", "psc:m", "csrng"],
+	"service_access":	["lm", "fsp-srv", "time:u", "set", "set:sys", "srepo:u", "psc:m", "csrng", "ectx:r"],
 	"service_host":	["erpt:r", "erpt:c"],
 	"kernel_capabilities":	[{
 			"type":	"kernel_flags",
@@ -69,7 +70,9 @@
 				"svcReturnFromException":	"0x28",
 				"svcGetInfo":	"0x29",
 				"svcWaitForAddress":	"0x34",
+				"svcGetResourceLimitLimitValue":	"0x30",
 				"svcSignalToAddress":	"0x35",
+				"svcGetResourceLimitPeakValue":	"0x37",
 				"svcCreateSession":	"0x40",
 				"svcAcceptSession":	"0x41",
 				"svcReplyAndReceiveLight":	"0x42",

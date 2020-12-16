@@ -14,8 +14,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #pragma once
-#include "fs_common.hpp"
-#include "fs_file.hpp"
+#include <stratosphere/fs/fs_common.hpp>
+#include <stratosphere/fs/fs_file.hpp>
 
 namespace ams::fs {
 
@@ -36,7 +36,7 @@ namespace ams::fs {
         }
     };
 
-    static_assert(std::is_pod<QueryRangeInfo>::value);
+    static_assert(util::is_pod<QueryRangeInfo>::value);
     static_assert(sizeof(QueryRangeInfo) == 0x40);
     static_assert(sizeof(QueryRangeInfo) == sizeof(::FsRangeInfo));
 
@@ -47,6 +47,8 @@ namespace ams::fs {
 
     enum class AesCtrKeyTypeFlag : s32 {
         InternalKeyForSoftwareAes = (1 << 0),
+        InternalKeyForHardwareAes = (1 << 1),
+        ExternalKeyForHardwareAes = (1 << 2),
     };
 
 }

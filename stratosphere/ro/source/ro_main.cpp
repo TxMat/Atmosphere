@@ -13,8 +13,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include "ro_debug_monitor.hpp"
-#include "ro_service.hpp"
+#include <stratosphere.hpp>
+#include "ro_debug_monitor_service.hpp"
+#include "ro_ro_service.hpp"
 
 extern "C" {
     extern u32 __start__;
@@ -63,7 +64,7 @@ void __appInit(void) {
     sm::DoWithSession([&]() {
         R_ABORT_UNLESS(setsysInitialize());
         R_ABORT_UNLESS(fsInitialize());
-        R_ABORT_UNLESS(splInitialize());
+        spl::Initialize();
         if (hos::GetVersion() < hos::Version_3_0_0) {
             R_ABORT_UNLESS(pminfoInitialize());
         }
@@ -79,12 +80,9 @@ void __appExit(void) {
     if (hos::GetVersion() < hos::Version_3_0_0) {
         pminfoExit();
     }
+
     setsysExit();
 }
-
-/* Helpers to create RO objects. */
-static constexpr auto MakeRoServiceForSelf = []() { return std::make_shared<ro::Service>(ro::ModuleType::ForSelf); };
-static constexpr auto MakeRoServiceForOthers = []() { return std::make_shared<ro::Service>(ro::ModuleType::ForOthers); };
 
 namespace {
 
@@ -97,11 +95,11 @@ namespace {
     constexpr size_t          DebugMonitorMaxSessions = 2;
 
     /* NOTE: Official code passes 32 for ldr:ro max sessions. We will pass 2, because that's the actual limit. */
-    constexpr sm::ServiceName ForSelfServiceName = sm::ServiceName::Encode("ldr:ro");
-    constexpr size_t          ForSelfMaxSessions = 2;
+    constexpr sm::ServiceName UserServiceName = sm::ServiceName::Encode("ldr:ro");
+    constexpr size_t          UserMaxSessions = 2;
 
-    constexpr sm::ServiceName ForOthersServiceName = sm::ServiceName::Encode("ro:1");
-    constexpr size_t          ForOthersMaxSessions = 2;
+    constexpr sm::ServiceName JitPluginServiceName = sm::ServiceName::Encode("ro:1");
+    constexpr size_t          JitPluginMaxSessions = 2;
 
 }
 
@@ -113,18 +111,18 @@ int main(int argc, char **argv)
 
     /* Initialize Debug config. */
     {
-        ON_SCOPE_EXIT { splExit(); };
+        ON_SCOPE_EXIT { spl::Finalize(); };
 
-        ro::SetDevelopmentHardware(spl::IsDevelopmentHardware());
+        ro::SetDevelopmentHardware(spl::IsDevelopment());
         ro::SetDevelopmentFunctionEnabled(spl::IsDevelopmentFunctionEnabled());
     }
 
     /* Create services. */
-    R_ABORT_UNLESS((g_server_manager.RegisterServer<ro::DebugMonitorService>(DebugMonitorServiceName, DebugMonitorMaxSessions)));
+    R_ABORT_UNLESS((g_server_manager.RegisterServer<ro::impl::IDebugMonitorInterface, ro::DebugMonitorService>(DebugMonitorServiceName, DebugMonitorMaxSessions)));
 
-    R_ABORT_UNLESS((g_server_manager.RegisterServer<ro::Service, +MakeRoServiceForSelf>(ForSelfServiceName, ForSelfMaxSessions)));
+    R_ABORT_UNLESS((g_server_manager.RegisterServer<ro::impl::IRoInterface, ro::RoUserService>(UserServiceName, UserMaxSessions)));
     if (hos::GetVersion() >= hos::Version_7_0_0) {
-        R_ABORT_UNLESS((g_server_manager.RegisterServer<ro::Service, +MakeRoServiceForOthers>(ForOthersServiceName, ForOthersMaxSessions)));
+        R_ABORT_UNLESS((g_server_manager.RegisterServer<ro::impl::IRoInterface, ro::RoJitPluginService>(JitPluginServiceName, JitPluginMaxSessions)));
     }
 
     /* Loop forever, servicing our services. */

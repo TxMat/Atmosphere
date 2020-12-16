@@ -167,35 +167,36 @@ namespace ams::boot2 {
             }
         }
 
-        bool GetGpioPadLow(GpioPadName pad) {
-            GpioPadSession button;
-            if (R_FAILED(gpioOpenSession(&button, pad))) {
+        bool GetGpioPadLow(DeviceCode device_code) {
+            gpio::GpioPadSession button;
+            if (R_FAILED(gpio::OpenSession(std::addressof(button), device_code))) {
                 return false;
             }
 
             /* Ensure we close even on early return. */
-            ON_SCOPE_EXIT { gpioPadClose(&button); };
+            ON_SCOPE_EXIT { gpio::CloseSession(std::addressof(button)); };
 
             /* Set direction input. */
-            gpioPadSetDirection(&button, GpioDirection_Input);
+            gpio::SetDirection(std::addressof(button), gpio::Direction_Input);
 
-            GpioValue val;
-            return R_SUCCEEDED(gpioPadGetValue(&button, &val)) && val == GpioValue_Low;
+            return gpio::GetValue(std::addressof(button)) == gpio::GpioValue_Low;
+        }
+
+        bool IsForceMaintenance() {
+            u8 force_maintenance = 1;
+            settings::fwdbg::GetSettingsItemValue(&force_maintenance, sizeof(force_maintenance), "boot", "force_maintenance");
+            return force_maintenance != 0;
         }
 
         bool IsMaintenanceMode() {
             /* Contact set:sys, retrieve boot!force_maintenance. */
-            {
-                u8 force_maintenance = 1;
-                settings::fwdbg::GetSettingsItemValue(&force_maintenance, sizeof(force_maintenance), "boot", "force_maintenance");
-                if (force_maintenance != 0) {
-                    return true;
-                }
+            if (IsForceMaintenance()) {
+                return true;
             }
 
             /* Contact GPIO, read plus/minus buttons. */
             {
-                return GetGpioPadLow(GpioPadName_ButtonVolUp) && GetGpioPadLow(GpioPadName_ButtonVolDown);
+                return GetGpioPadLow(gpio::DeviceCode_ButtonVolUp) && GetGpioPadLow(gpio::DeviceCode_ButtonVolDn);
             }
         }
 
@@ -313,17 +314,50 @@ namespace ams::boot2 {
         R_ABORT_UNLESS(sm::mitm::WaitMitm(sm::ServiceName::Encode("fsp-srv")));
 
         /* Launch programs required to mount the SD card. */
-        LaunchList(PreSdCardLaunchPrograms, NumPreSdCardLaunchPrograms);
+        /* psc, bus, pcv (and usb on newer firmwares) is the minimal set of required programs. */
+        /* bus depends on pcie, and pcv depends on settings. */
+        {
+            /* Launch psc. */
+            LaunchProgram(nullptr, ncm::ProgramLocation::Make(ncm::SystemProgramId::Psc, ncm::StorageId::BuiltInSystem), 0);
+
+            /* Launch pcie. */
+            LaunchProgram(nullptr, ncm::ProgramLocation::Make(ncm::SystemProgramId::Pcie, ncm::StorageId::BuiltInSystem), 0);
+
+            /* Launch bus. */
+            LaunchProgram(nullptr, ncm::ProgramLocation::Make(ncm::SystemProgramId::Bus, ncm::StorageId::BuiltInSystem), 0);
+
+            /* Launch settings. */
+            LaunchProgram(nullptr, ncm::ProgramLocation::Make(ncm::SystemProgramId::Settings, ncm::StorageId::BuiltInSystem), 0);
+
+            /* NOTE: Here we work around a race condition in the boot process by ensuring that settings initializes its db. */
+            {
+                /* Connect to set:sys. */
+                sm::ScopedServiceHolder<::setsysInitialize, ::setsysExit> setsys_holder;
+                AMS_ABORT_UNLESS(setsys_holder);
+
+                /* Retrieve setting from the database. */
+                u8 force_maintenance = 0;
+                settings::fwdbg::GetSettingsItemValue(&force_maintenance, sizeof(force_maintenance), "boot", "force_maintenance");
+            }
+
+            /* Launch pcv. */
+            LaunchProgram(nullptr, ncm::ProgramLocation::Make(ncm::SystemProgramId::Pcv, ncm::StorageId::BuiltInSystem), 0);
+
+            /* Launch usb. */
+            LaunchProgram(nullptr, ncm::ProgramLocation::Make(ncm::SystemProgramId::Usb, ncm::StorageId::BuiltInSystem), 0);
+        }
 
         /* Wait for the SD card required services to be ready. */
         cfg::WaitSdCardRequiredServicesReady();
 
         /* Wait for other atmosphere mitm modules to initialize. */
         R_ABORT_UNLESS(sm::mitm::WaitMitm(sm::ServiceName::Encode("set:sys")));
-        if (hos::GetVersion() >= hos::Version_2_0_0) {
-            R_ABORT_UNLESS(sm::mitm::WaitMitm(sm::ServiceName::Encode("bpc")));
-        } else {
-            R_ABORT_UNLESS(sm::mitm::WaitMitm(sm::ServiceName::Encode("bpc:c")));
+        if (spl::GetSocType() == spl::SocType_Erista) {
+            if (hos::GetVersion() >= hos::Version_2_0_0) {
+                R_ABORT_UNLESS(sm::mitm::WaitMitm(sm::ServiceName::Encode("bpc")));
+            } else {
+                R_ABORT_UNLESS(sm::mitm::WaitMitm(sm::ServiceName::Encode("bpc:c")));
+            }
         }
 
         /* Launch Atmosphere boot2, using NcmStorageId_None to force SD card boot. */

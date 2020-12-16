@@ -38,6 +38,7 @@ static inline uintptr_t _GetIoMapping(u64 io_addr, u64 io_size)
     u64 vaddr;
     u64 aligned_addr = (io_addr & ~0xFFFul);
     u64 aligned_size = io_size + (io_addr - aligned_addr);
+
     if (emuMMC_ctx.fs_ver >= FS_VER_10_0_0) {
         u64 out_size;
         if (svcQueryIoMapping(&vaddr, &out_size, aligned_addr, aligned_size) != 0) {
@@ -48,6 +49,7 @@ static inline uintptr_t _GetIoMapping(u64 io_addr, u64 io_size)
             fatal_abort(Fatal_IoMappingLegacy);
         }
     }
+
     return (uintptr_t)(vaddr + (io_addr - aligned_addr));
 }
 
@@ -96,7 +98,7 @@ u64 get_tmr_us()
 void msleep(u64 milliseconds)
 {
 	u64 now = get_tmr_ms();
-	while (get_tmr_ms() - now < milliseconds)
+	while (((u64)get_tmr_ms() - now) < milliseconds)
 		;
 	//svcSleepThread(1000000 * milliseconds);
 }
@@ -105,7 +107,7 @@ void msleep(u64 milliseconds)
 void usleep(u64 microseconds)
 {
 	u64 now = get_tmr_us();
-	while (get_tmr_us() - now < microseconds)
+	while (((u64)get_tmr_us() - now) < microseconds)
 		;
 	//svcSleepThread(1000 * microseconds);
 }

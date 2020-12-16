@@ -21,10 +21,11 @@ namespace ams::kern {
 
         class KDpcTask {
             private:
-                static inline KLightLock s_lock;
-                static inline KLightConditionVariable s_cond_var;
-                static inline u64 s_core_mask;
-                static inline KDpcTask *s_task;
+                static constinit inline KLightLock s_req_lock;
+                static constinit inline KLightLock s_lock;
+                static constinit inline KLightConditionVariable s_cond_var;
+                static constinit inline u64 s_core_mask;
+                static constinit inline KDpcTask *s_task;
             private:
                 static bool HasRequest(s32 core_id) {
                     return (s_core_mask & (1ull << core_id)) != 0;
@@ -40,12 +41,35 @@ namespace ams::kern {
             public:
                 virtual void DoTask() { /* ... */ }
 
+                static void Request(KDpcTask *task) {
+                    KScopedLightLock rlk(s_req_lock);
+
+                    /* Acquire the requested task. */
+                    MESOSPHERE_ABORT_UNLESS(s_task == nullptr);
+                    s_task = task;
+                    {
+                        KScopedLightLock lk(s_lock);
+                        MESOSPHERE_ABORT_UNLESS(s_core_mask == 0);
+
+                        for (auto core = 0; core < static_cast<s32>(cpu::NumCores); ++core) {
+                            SetRequest(core);
+                        }
+
+                        s_cond_var.Broadcast();
+
+                        while (s_core_mask != 0) {
+                            s_cond_var.Wait(std::addressof(s_lock), -1ll);
+                        }
+                    }
+                    s_task = nullptr;
+                }
+
                 static void WaitForRequest() {
                     /* Wait for a request to come in. */
                     const auto core_id = GetCurrentCoreId();
                     KScopedLightLock lk(s_lock);
                     while (!HasRequest(core_id)) {
-                        s_cond_var.Wait(&s_lock, -1ll);
+                        s_cond_var.Wait(std::addressof(s_lock), -1ll);
                     }
                 }
 
@@ -54,7 +78,7 @@ namespace ams::kern {
                     const auto core_id = GetCurrentCoreId();
                     KScopedLightLock lk(s_lock);
                     while (!HasRequest(core_id)) {
-                        s_cond_var.Wait(&s_lock, timeout);
+                        s_cond_var.Wait(std::addressof(s_lock), timeout);
                         if (KHardwareTimer::GetTick() >= timeout) {
                             return false;
                         }
@@ -86,6 +110,10 @@ namespace ams::kern {
 
         /* Manager thread functions. */
         void DpcManagerNormalThreadFunction(uintptr_t arg) {
+            /* Input argument goes unused. */
+            MESOSPHERE_UNUSED(arg);
+
+            /* Forever wait and service requests. */
             while (true) {
                 KDpcTask::WaitForRequest();
                 KDpcTask::HandleRequest();
@@ -93,6 +121,10 @@ namespace ams::kern {
         }
 
         void DpcManagerPreemptionThreadFunction(uintptr_t arg) {
+            /* Input argument goes unused. */
+            MESOSPHERE_UNUSED(arg);
+
+            /* Forever wait and service requests, rotating the scheduled queue every 10 ms. */
             s64 timeout = KHardwareTimer::GetTick() + DpcManagerTimeout;
             while (true) {
                 if (KDpcTask::TimedWaitForRequest(timeout)) {
@@ -126,9 +158,9 @@ namespace ams::kern {
         /* Launch the new thread. */
         g_preemption_priorities[core_id] = priority;
         if (core_id == cpu::NumCores - 1) {
-            MESOSPHERE_R_ABORT_UNLESS(KThread::InitializeKernelThread(new_thread, DpcManagerNormalThreadFunction,     0, DpcManagerThreadPriority, core_id));
-        } else {
             MESOSPHERE_R_ABORT_UNLESS(KThread::InitializeKernelThread(new_thread, DpcManagerPreemptionThreadFunction, 0, DpcManagerThreadPriority, core_id));
+        } else {
+            MESOSPHERE_R_ABORT_UNLESS(KThread::InitializeKernelThread(new_thread, DpcManagerNormalThreadFunction,     0, DpcManagerThreadPriority, core_id));
         }
 
         /* Register the new thread. */
@@ -139,6 +171,9 @@ namespace ams::kern {
     }
 
     void KDpcManager::HandleDpc() {
+        MESOSPHERE_ASSERT(!KInterruptManager::AreInterruptsEnabled());
+        MESOSPHERE_ASSERT(!KScheduler::IsSchedulerLockedByCurrentThread());
+
         /* The only deferred procedure supported by Horizon is thread termination. */
         /* Check if we need to terminate the current thread. */
         KThread *cur_thread = GetCurrentThreadPointer();
@@ -146,6 +181,13 @@ namespace ams::kern {
             KScopedInterruptEnable ei;
             cur_thread->Exit();
         }
+    }
+
+    void KDpcManager::Sync() {
+        MESOSPHERE_ASSERT(!KScheduler::IsSchedulerLockedByCurrentThread());
+
+        KDpcTask dummy_task;
+        KDpcTask::Request(std::addressof(dummy_task));
     }
 
 }

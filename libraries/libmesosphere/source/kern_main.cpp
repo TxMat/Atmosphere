@@ -51,8 +51,10 @@ namespace ams::kern {
 
             /* Initialize the memory manager and the KPageBuffer slabheap. */
             {
-                const auto &metadata_region = KMemoryLayout::GetMetadataPoolRegion();
-                Kernel::GetMemoryManager().Initialize(metadata_region.GetAddress(), metadata_region.GetSize());
+                const auto &management_region = KMemoryLayout::GetPoolManagementRegion();
+                MESOSPHERE_ABORT_UNLESS(management_region.GetEndAddress() != 0);
+
+                Kernel::GetMemoryManager().Initialize(management_region.GetAddress(), management_region.GetSize());
                 init::InitializeKPageBufferSlabHeap();
             }
 
@@ -68,6 +70,8 @@ namespace ams::kern {
             /* Initialize the Dynamic Slab Heaps. */
             {
                 const auto &pt_heap_region = KMemoryLayout::GetPageTableHeapRegion();
+                MESOSPHERE_ABORT_UNLESS(pt_heap_region.GetEndAddress() != 0);
+
                 Kernel::InitializeResourceManagers(pt_heap_region.GetAddress(), pt_heap_region.GetSize());
             }
         }
@@ -124,6 +128,13 @@ namespace ams::kern {
 
             /* Resume all threads suspended while we initialized. */
             KThread::ResumeThreadsSuspendedForInit();
+
+            /* Validate that all reserved dram blocks are valid. */
+            for (const auto &region : KMemoryLayout::GetPhysicalMemoryRegionTree()) {
+                if (region.IsDerivedFrom(KMemoryRegionType_DramReservedBase)) {
+                    MESOSPHERE_ABORT_UNLESS(region.GetEndAddress() != 0);
+                }
+            }
         }
         cpu::SynchronizeAllCores();
 
@@ -139,7 +150,7 @@ namespace ams::kern {
 
         /* Main() is done, and we should never get to this point. */
         MESOSPHERE_PANIC("Main Thread continued after exit.");
-        while (true) { /* ... */ }
+        AMS_INFINITE_LOOP();
     }
 
 }

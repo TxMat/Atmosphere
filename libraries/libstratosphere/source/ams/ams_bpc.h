@@ -15,9 +15,7 @@
  */
 
 #pragma once
-#include <switch/types.h>
-#include <switch/kernel/event.h>
-#include <switch/services/sm.h>
+#include <switch.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,7 +26,7 @@ void amsBpcExit(void);
 Service *amsBpcGetServiceSession(void);
 
 Result amsBpcRebootToFatalError(void *ctx);
-Result amsBpcSetInitialPayload(const void *src, size_t src_size);
+Result amsBpcSetRebootPayload(const void *src, size_t src_size);
 
 #ifdef __cplusplus
 }

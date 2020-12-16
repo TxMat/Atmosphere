@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "ldr_arguments.hpp"
 #include "ldr_content_management.hpp"
 #include "ldr_development_manager.hpp"
@@ -83,8 +84,12 @@ namespace ams::ldr {
         return ldr::ro::UnpinProgram(id);
     }
 
-    Result LoaderService::SetProgramArguments(ncm::ProgramId program_id, const sf::InPointerBuffer &args, u32 args_size) {
+    Result LoaderService::SetProgramArgumentsDeprecated(ncm::ProgramId program_id, const sf::InPointerBuffer &args, u32 args_size) {
         return args::Set(program_id, args.GetPointer(), std::min(args.GetSize(), size_t(args_size)));
+    }
+
+    Result LoaderService::SetProgramArguments(ncm::ProgramId program_id, const sf::InPointerBuffer &args) {
+        return args::Set(program_id, args.GetPointer(), args.GetSize());
     }
 
     Result LoaderService::FlushArguments() {

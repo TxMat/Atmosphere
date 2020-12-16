@@ -13,8 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <sys/stat.h>
-#include <sys/types.h>
+#include <stratosphere.hpp>
 #include "creport_crash_report.hpp"
 #include "creport_utils.hpp"
 
@@ -164,11 +163,11 @@ namespace ams::creport {
         svc::DebugEventInfo d;
         while (R_SUCCEEDED(svcGetDebugEvent(reinterpret_cast<u8 *>(&d), this->debug_handle))) {
             switch (d.type) {
-                case svc::DebugEvent_AttachProcess:
-                    this->HandleDebugEventInfoAttachProcess(d);
+                case svc::DebugEvent_CreateProcess:
+                    this->HandleDebugEventInfoCreateProcess(d);
                     break;
-                case svc::DebugEvent_AttachThread:
-                    this->HandleDebugEventInfoAttachThread(d);
+                case svc::DebugEvent_CreateThread:
+                    this->HandleDebugEventInfoCreateThread(d);
                     break;
                 case svc::DebugEvent_Exception:
                     this->HandleDebugEventInfoException(d);
@@ -183,8 +182,8 @@ namespace ams::creport {
         this->crashed_thread.ReadFromProcess(this->debug_handle, this->thread_tls_map, this->crashed_thread_id, this->Is64Bit());
     }
 
-    void CrashReport::HandleDebugEventInfoAttachProcess(const svc::DebugEventInfo &d) {
-        this->process_info = d.info.attach_process;
+    void CrashReport::HandleDebugEventInfoCreateProcess(const svc::DebugEventInfo &d) {
+        this->process_info = d.info.create_process;
 
         /* On 5.0.0+, we want to parse out a dying message from application crashes. */
         if (hos::GetVersion() < hos::Version_5_0_0 || !IsApplication()) {
@@ -218,9 +217,9 @@ namespace ams::creport {
         this->dying_message_size = userdata_size;
     }
 
-    void CrashReport::HandleDebugEventInfoAttachThread(const svc::DebugEventInfo &d) {
+    void CrashReport::HandleDebugEventInfoCreateThread(const svc::DebugEventInfo &d) {
         /* Save info on the thread's TLS address for later. */
-        this->thread_tls_map[d.info.attach_thread.thread_id] = d.info.attach_thread.tls_address;
+        this->thread_tls_map[d.info.create_thread.thread_id] = d.info.create_thread.tls_address;
     }
 
     void CrashReport::HandleDebugEventInfoException(const svc::DebugEventInfo &d) {
@@ -289,7 +288,7 @@ namespace ams::creport {
         svcReadDebugProcessMemory(this->dying_message, this->debug_handle, this->dying_message_address, this->dying_message_size);
     }
 
-    void CrashReport::SaveReport() {
+    void CrashReport::SaveReport(bool enable_screenshot) {
         /* Try to ensure path exists. */
         TryCreateReportDirectories();
 
@@ -334,6 +333,9 @@ namespace ams::creport {
             this->dying_message = nullptr;
 
             /* Try to take a screenshot. */
+            /* NOTE: Nintendo validates that enable_screenshot is true here, and validates that the application id is not in a blacklist. */
+            /* Since we save reports only locally and do not send them via telemetry, we will skip this. */
+            AMS_UNUSED(enable_screenshot);
             if (hos::GetVersion() >= hos::Version_9_0_0 && this->IsApplication()) {
                 sm::ScopedServiceHolder<capsrv::InitializeScreenShotControl, capsrv::FinalizeScreenShotControl> capssc_holder;
                 if (capssc_holder) {
@@ -351,7 +353,11 @@ namespace ams::creport {
     }
 
     void CrashReport::SaveToFile(ScopedFile &file) {
-        file.WriteFormat(u8"Atmosphère Crash Report (v1.5):\n");
+        file.WriteFormat("Atmosphère Crash Report (v1.5):\n");
+
+        /* TODO: Remove in Atmosphere 1.0.0. */
+        file.WriteFormat("Mesosphere:                      %s\n", svc::IsKernelMesosphere() ? "Enabled" : "Disabled");
+
         file.WriteFormat("Result:                          0x%X (2%03d-%04d)\n\n", this->result.GetValue(), this->result.GetModule(), this->result.GetDescription());
 
         /* Process Info. */

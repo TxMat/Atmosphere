@@ -19,6 +19,9 @@
 
 namespace ams::svc::ipc {
 
+    #pragma GCC push_options
+    #pragma GCC optimize ("-O3")
+
     ALWAYS_INLINE u32 *GetMessageBuffer() {
         return GetThreadLocalRegion()->message_buffer;
     }
@@ -58,11 +61,11 @@ namespace ams::svc::ipc {
                 private:
                     util::BitPack32 header[2];
                 public:
-                    constexpr ALWAYS_INLINE MessageHeader() : header({util::BitPack32{0}, util::BitPack32{0}}) {
+                    constexpr ALWAYS_INLINE MessageHeader() : header{util::BitPack32{0}, util::BitPack32{0}} {
                         this->header[0].Set<Tag>(NullTag);
                     }
 
-                    constexpr ALWAYS_INLINE MessageHeader(u16 tag, bool special, s32 ptr, s32 send, s32 recv, s32 exch, s32 raw, s32 recv_list) : header({util::BitPack32{0}, util::BitPack32{0}}) {
+                    constexpr ALWAYS_INLINE MessageHeader(u16 tag, bool special, s32 ptr, s32 send, s32 recv, s32 exch, s32 raw, s32 recv_list) : header{util::BitPack32{0}, util::BitPack32{0}} {
                         this->header[0].Set<Tag>(tag);
                         this->header[0].Set<PointerCount>(ptr);
                         this->header[0].Set<SendCount>(send);
@@ -74,11 +77,11 @@ namespace ams::svc::ipc {
                         this->header[1].Set<HasSpecialHeader>(special);
                     }
 
-                    ALWAYS_INLINE explicit MessageHeader(const MessageBuffer &buf) : header({util::BitPack32{0}, util::BitPack32{0}}) {
+                    ALWAYS_INLINE explicit MessageHeader(const MessageBuffer &buf) : header{util::BitPack32{0}, util::BitPack32{0}} {
                         buf.Get(0, this->header, util::size(this->header));
                     }
 
-                    ALWAYS_INLINE explicit MessageHeader(const u32 *msg) : header({util::BitPack32{msg[0]}, util::BitPack32{msg[1]}}) { /* ... */ }
+                    ALWAYS_INLINE explicit MessageHeader(const u32 *msg) : header{util::BitPack32{msg[0]}, util::BitPack32{msg[1]}} { /* ... */ }
 
                     constexpr ALWAYS_INLINE u16 GetTag() const {
                         return this->header[0].Get<Tag>();
@@ -159,11 +162,11 @@ namespace ams::svc::ipc {
                         return this->header.Get<HasProcessId>();
                     }
 
-                    constexpr ALWAYS_INLINE bool GetCopyHandleCount() const {
+                    constexpr ALWAYS_INLINE s32 GetCopyHandleCount() const {
                         return this->header.Get<CopyHandleCount>();
                     }
 
-                    constexpr ALWAYS_INLINE bool GetMoveHandleCount() const {
+                    constexpr ALWAYS_INLINE s32 GetMoveHandleCount() const {
                         return this->header.Get<MoveHandleCount>();
                     }
 
@@ -219,9 +222,9 @@ namespace ams::svc::ipc {
                 private:
                     util::BitPack32 data[3];
                 public:
-                    constexpr ALWAYS_INLINE MapAliasDescriptor() : data({util::BitPack32{0}, util::BitPack32{0}, util::BitPack32{0}}) { /* ... */ }
+                    constexpr ALWAYS_INLINE MapAliasDescriptor() : data{util::BitPack32{0}, util::BitPack32{0}, util::BitPack32{0}} { /* ... */ }
 
-                    ALWAYS_INLINE MapAliasDescriptor(const void *buffer, size_t _size, Attribute attr = Attribute_Ipc) : data({util::BitPack32{0}, util::BitPack32{0}, util::BitPack32{0}}) {
+                    ALWAYS_INLINE MapAliasDescriptor(const void *buffer, size_t _size, Attribute attr = Attribute_Ipc) : data{util::BitPack32{0}, util::BitPack32{0}, util::BitPack32{0}} {
                         const u64 address = reinterpret_cast<u64>(buffer);
                         const u64 size    = static_cast<u64>(_size);
                         this->data[0] = { static_cast<u32>(size) };
@@ -233,7 +236,7 @@ namespace ams::svc::ipc {
                         this->data[2].Set<AddressHigh>(GetAddressHigh(address));
                     }
 
-                    ALWAYS_INLINE MapAliasDescriptor(const MessageBuffer &buf, s32 index) : data({util::BitPack32{0}, util::BitPack32{0}, util::BitPack32{0}}) {
+                    ALWAYS_INLINE MapAliasDescriptor(const MessageBuffer &buf, s32 index) : data{util::BitPack32{0}, util::BitPack32{0}, util::BitPack32{0}} {
                         buf.Get(index, this->data, util::size(this->data));
                     }
 
@@ -283,9 +286,9 @@ namespace ams::svc::ipc {
                 private:
                     util::BitPack32 data[2];
                 public:
-                    constexpr ALWAYS_INLINE PointerDescriptor() : data({util::BitPack32{0}, util::BitPack32{0}}) { /* ... */ }
+                    constexpr ALWAYS_INLINE PointerDescriptor() : data{util::BitPack32{0}, util::BitPack32{0}} { /* ... */ }
 
-                    ALWAYS_INLINE PointerDescriptor(const void *buffer, size_t size, s32 index) : data({util::BitPack32{0}, util::BitPack32{0}}) {
+                    ALWAYS_INLINE PointerDescriptor(const void *buffer, size_t size, s32 index) : data{util::BitPack32{0}, util::BitPack32{0}} {
                         const u64 address = reinterpret_cast<u64>(buffer);
 
                         this->data[0].Set<Index>(index);
@@ -296,7 +299,7 @@ namespace ams::svc::ipc {
                         this->data[1] = { static_cast<u32>(address) };
                     }
 
-                    ALWAYS_INLINE PointerDescriptor(const MessageBuffer &buf, s32 index) : data({util::BitPack32{0}, util::BitPack32{0}}) {
+                    ALWAYS_INLINE PointerDescriptor(const MessageBuffer &buf, s32 index) : data{util::BitPack32{0}, util::BitPack32{0}} {
                         buf.Get(index, this->data, util::size(this->data));
                     }
 
@@ -338,9 +341,9 @@ namespace ams::svc::ipc {
                 private:
                     util::BitPack32 data[2];
                 public:
-                    constexpr ALWAYS_INLINE ReceiveListEntry() : data({util::BitPack32{0}, util::BitPack32{0}}) { /* ... */ }
+                    constexpr ALWAYS_INLINE ReceiveListEntry() : data{util::BitPack32{0}, util::BitPack32{0}} { /* ... */ }
 
-                    ALWAYS_INLINE ReceiveListEntry(const void *buffer, size_t size) : data({util::BitPack32{0}, util::BitPack32{0}}) {
+                    ALWAYS_INLINE ReceiveListEntry(const void *buffer, size_t size) : data{util::BitPack32{0}, util::BitPack32{0}} {
                         const u64 address = reinterpret_cast<u64>(buffer);
 
                         this->data[0] = { static_cast<u32>(address) };
@@ -349,9 +352,9 @@ namespace ams::svc::ipc {
                         this->data[1].Set<Size>(size);
                     }
 
-                    ALWAYS_INLINE ReceiveListEntry(u32 a, u32 b) : data({util::BitPack32{a}, util::BitPack32{b}}) { /* ... */ }
+                    ALWAYS_INLINE ReceiveListEntry(u32 a, u32 b) : data{util::BitPack32{a}, util::BitPack32{b}} { /* ... */ }
 
-                    constexpr ALWAYS_INLINE uintptr_t GetAddress() {
+                    constexpr ALWAYS_INLINE uintptr_t GetAddress() const {
                         const u64 address = (static_cast<u64>(this->data[1].Get<AddressHigh>()) << AddressLow::Count) | this->data[0].Get<AddressLow>();
                         return address;
                     }
@@ -439,34 +442,34 @@ namespace ams::svc::ipc {
                 return index + (spc.GetHeaderSize() / sizeof(*this->buffer));
             }
 
-            ALWAYS_INLINE s32 SetHandle(s32 index, const ::ams::svc::Handle &hnd) {
+            ALWAYS_INLINE s32 SetHandle(s32 index, const ::ams::svc::Handle &hnd) const {
                 static_assert(util::IsAligned(sizeof(hnd), sizeof(*this->buffer)));
                 __builtin_memcpy(this->buffer + index, std::addressof(hnd), sizeof(hnd));
                 return index + (sizeof(hnd) / sizeof(*this->buffer));
             }
 
-            ALWAYS_INLINE s32 SetProcessId(s32 index, const u64 pid) {
+            ALWAYS_INLINE s32 SetProcessId(s32 index, const u64 pid) const {
                 static_assert(util::IsAligned(sizeof(pid), sizeof(*this->buffer)));
                 __builtin_memcpy(this->buffer + index, std::addressof(pid), sizeof(pid));
                 return index + (sizeof(pid) / sizeof(*this->buffer));
             }
 
-            ALWAYS_INLINE s32 Set(s32 index, const MapAliasDescriptor &desc) {
+            ALWAYS_INLINE s32 Set(s32 index, const MapAliasDescriptor &desc) const {
                 __builtin_memcpy(this->buffer + index, desc.GetData(), desc.GetDataSize());
                 return index + (desc.GetDataSize() / sizeof(*this->buffer));
             }
 
-            ALWAYS_INLINE s32 Set(s32 index, const PointerDescriptor &desc) {
+            ALWAYS_INLINE s32 Set(s32 index, const PointerDescriptor &desc) const {
                 __builtin_memcpy(this->buffer + index, desc.GetData(), desc.GetDataSize());
                 return index + (desc.GetDataSize() / sizeof(*this->buffer));
             }
 
-            ALWAYS_INLINE s32 Set(s32 index, const ReceiveListEntry &desc) {
+            ALWAYS_INLINE s32 Set(s32 index, const ReceiveListEntry &desc) const {
                 __builtin_memcpy(this->buffer + index, desc.GetData(), desc.GetDataSize());
                 return index + (desc.GetDataSize() / sizeof(*this->buffer));
             }
 
-            ALWAYS_INLINE s32 Set(s32 index, const u32 val) {
+            ALWAYS_INLINE s32 Set(s32 index, const u32 val) const {
                 static_assert(util::IsAligned(sizeof(val), sizeof(*this->buffer)));
                 __builtin_memcpy(this->buffer + index, std::addressof(val), sizeof(val));
                 return index + (sizeof(val) / sizeof(*this->buffer));
@@ -498,6 +501,7 @@ namespace ams::svc::ipc {
             }
 
             static constexpr ALWAYS_INLINE s32 GetSpecialDataIndex(const MessageHeader &hdr, const SpecialHeader &spc) {
+                AMS_UNUSED(hdr);
                 return (MessageHeader::GetDataSize() / sizeof(util::BitPack32)) + (spc.GetHeaderSize() / sizeof(util::BitPack32));
             }
 
@@ -521,7 +525,7 @@ namespace ams::svc::ipc {
                 }
             }
 
-            static constexpr ALWAYS_INLINE s32 GetMessageBufferSize(const MessageHeader &hdr, const SpecialHeader &spc) {
+            static constexpr ALWAYS_INLINE size_t GetMessageBufferSize(const MessageHeader &hdr, const SpecialHeader &spc) {
                 /* Get the size of the plain message. */
                 size_t msg_size = GetReceiveListIndex(hdr, spc) * sizeof(util::BitPack32);
 
@@ -543,5 +547,7 @@ namespace ams::svc::ipc {
                 return msg_size;
             }
     };
+
+    #pragma GCC pop_options
 
 }

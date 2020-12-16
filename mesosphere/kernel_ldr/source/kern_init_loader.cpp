@@ -28,34 +28,17 @@ namespace ams::kern::init::loader {
 
     namespace {
 
-        constexpr size_t KernelResourceRegionSize = 0x1728000;
-        constexpr size_t ExtraKernelResourceSize  = 0x68000;
-        static_assert(ExtraKernelResourceSize + KernelResourceRegionSize == 0x1790000);
-        constexpr size_t KernelResourceReduction_10_0_0 = 0x10000;
+        static_assert(InitialProcessBinarySizeMax <= KernelResourceSize);
 
-        constexpr size_t InitialPageTableRegionSize = 0x200000;
+        constexpr size_t InitialPageTableRegionSizeMax = 2_MB;
+        static_assert(InitialPageTableRegionSizeMax < KernelPageTableHeapSize + KernelInitialPageHeapSize);
 
         /* Global Allocator. */
         KInitialPageAllocator g_initial_page_allocator;
 
         KInitialPageAllocator::State g_final_page_allocator_state;
 
-        size_t GetResourceRegionSize() {
-            /* Decide if Kernel should have enlarged resource region. */
-            const bool use_extra_resources = KSystemControl::Init::ShouldIncreaseThreadResourceLimit();
-            size_t resource_region_size = KernelResourceRegionSize + (use_extra_resources ? ExtraKernelResourceSize : 0);
-            static_assert(KernelResourceRegionSize > InitialProcessBinarySizeMax);
-            static_assert(KernelResourceRegionSize + ExtraKernelResourceSize > InitialProcessBinarySizeMax);
-
-            /* 10.0.0 reduced the kernel resource region size by 64K. */
-            if (kern::GetTargetFirmware() >= kern::TargetFirmware_10_0_0) {
-                resource_region_size -= KernelResourceReduction_10_0_0;
-            }
-            return resource_region_size;
-        }
-
         void RelocateKernelPhysically(uintptr_t &base_address, KernelLayout *&layout) {
-            /* TODO: Proper secure monitor call. */
             KPhysicalAddress correct_base = KSystemControl::Init::GetKernelPhysicalBaseAddress(base_address);
             if (correct_base != base_address) {
                 const uintptr_t diff = GetInteger(correct_base) - base_address;
@@ -82,11 +65,27 @@ namespace ams::kern::init::loader {
             cpu::DataSynchronizationBarrier();
 
             /* Invalidate entire instruction cache. */
-            cpu::InvalidateEntireInstructionCache();
+            cpu::InvalidateEntireInstructionCacheForInit();
 
             /* Invalidate entire TLB. */
             cpu::InvalidateEntireTlb();
         }
+
+        #ifdef ATMOSPHERE_BOARD_NINTENDO_NX
+
+        ALWAYS_INLINE bool ShouldPerformCpuSpecificSetup() {
+            /* Perform cpu-specific setup only on < 10.0.0. */
+            return kern::GetTargetFirmware() < ams::TargetFirmware_10_0_0;
+        }
+
+        #else
+
+        consteval ALWAYS_INLINE bool ShouldPerformCpuSpecificSetup() {
+            /* Always perform cpu-specific setup. */
+            return true;
+        }
+
+        #endif
 
         void SetupInitialIdentityMapping(KInitialPageTable &ttbr1_table, uintptr_t base_address, uintptr_t kernel_size, uintptr_t page_table_region, size_t page_table_region_size, KInitialPageTable::IPageAllocator &allocator) {
             /* Make a new page table for TTBR0_EL1. */
@@ -117,8 +116,8 @@ namespace ams::kern::init::loader {
             cpu::MemoryAccessIndirectionRegisterAccessor(MairValue).Store();
             cpu::TranslationControlRegisterAccessor(TcrValue).Store();
 
-            /* Perform cpu-specific setup on < 10.0.0. */
-            if (kern::GetTargetFirmware() < kern::TargetFirmware_10_0_0) {
+            /* Perform cpu-specific setup if needed. */
+            if (ShouldPerformCpuSpecificSetup()) {
                 SavedRegisterState saved_registers;
                 SaveRegistersToTpidrEl1(&saved_registers);
                 ON_SCOPE_EXIT { VerifyAndClearTpidrEl1(&saved_registers); };
@@ -208,9 +207,9 @@ namespace ams::kern::init::loader {
 
             /* Repeatedly generate a random virtual address until we get one that's unmapped in the destination page table. */
             while (true) {
-                const KVirtualAddress random_kaslr_slide  = KSystemControl::Init::GenerateRandomRange(KernelBaseRangeMin, KernelBaseRangeEnd);
-                const KVirtualAddress kernel_region_start = util::AlignDown(GetInteger(random_kaslr_slide), KernelBaseAlignment);
-                const KVirtualAddress kernel_region_end   = util::AlignUp(GetInteger(kernel_region_start) + kernel_offset + kernel_size, KernelBaseAlignment);
+                const uintptr_t       random_kaslr_slide  = KSystemControl::Init::GenerateRandomRange(KernelBaseRangeMin / KernelBaseAlignment, KernelBaseRangeEnd / KernelBaseAlignment);
+                const KVirtualAddress kernel_region_start = random_kaslr_slide * KernelBaseAlignment;
+                const KVirtualAddress kernel_region_end   = kernel_region_start + util::AlignUp(kernel_offset + kernel_size, KernelBaseAlignment);
                 const size_t          kernel_region_size  = GetInteger(kernel_region_end) - GetInteger(kernel_region_start);
 
                 /* Make sure the region has not overflowed */
@@ -241,9 +240,6 @@ namespace ams::kern::init::loader {
         RelocateKernelPhysically(base_address, layout);
 
         /* Validate kernel layout. */
-        /* TODO: constexpr 0x1000 definition somewhere. */
-        /* In stratosphere, this is os::MemoryPageSize. */
-        /* We don't have ams::os, this may go in hw:: or something. */
         const uintptr_t rx_offset      = layout->rx_offset;
         const uintptr_t rx_end_offset  = layout->rx_end_offset;
         const uintptr_t ro_offset      = layout->ro_offset;
@@ -251,12 +247,12 @@ namespace ams::kern::init::loader {
         const uintptr_t rw_offset      = layout->rw_offset;
         /* UNUSED: const uintptr_t rw_end_offset  = layout->rw_end_offset; */
         const uintptr_t bss_end_offset = layout->bss_end_offset;
-        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(rx_offset,      0x1000));
-        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(rx_end_offset,  0x1000));
-        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(ro_offset,      0x1000));
-        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(ro_end_offset,  0x1000));
-        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(rw_offset,      0x1000));
-        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(bss_end_offset, 0x1000));
+        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(rx_offset,      PageSize));
+        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(rx_end_offset,  PageSize));
+        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(ro_offset,      PageSize));
+        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(ro_end_offset,  PageSize));
+        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(rw_offset,      PageSize));
+        MESOSPHERE_INIT_ABORT_UNLESS(util::IsAligned(bss_end_offset, PageSize));
         const uintptr_t bss_offset            = layout->bss_offset;
         const uintptr_t ini_load_offset       = layout->ini_load_offset;
         const uintptr_t dynamic_offset        = layout->dynamic_offset;
@@ -264,7 +260,7 @@ namespace ams::kern::init::loader {
         const uintptr_t init_array_end_offset = layout->init_array_end_offset;
 
         /* Determine the size of the resource region. */
-        const size_t resource_region_size = GetResourceRegionSize();
+        const size_t resource_region_size = KMemoryLayout::GetResourceRegionSizeForInit();
 
         /* Setup the INI1 header in memory for the kernel. */
         const uintptr_t ini_end_address  = base_address + ini_load_offset + resource_region_size;
@@ -288,7 +284,7 @@ namespace ams::kern::init::loader {
         KInitialPageTable ttbr1_table(g_initial_page_allocator.Allocate());
 
         /* Setup initial identity mapping. TTBR1 table passed by reference. */
-        SetupInitialIdentityMapping(ttbr1_table, base_address, bss_end_offset, ini_end_address, InitialPageTableRegionSize, g_initial_page_allocator);
+        SetupInitialIdentityMapping(ttbr1_table, base_address, bss_end_offset, ini_end_address, InitialPageTableRegionSizeMax, g_initial_page_allocator);
 
         /* Generate a random slide for the kernel's base address. */
         const KVirtualAddress virtual_base_address = GetRandomKernelBaseAddress(ttbr1_table, base_address, bss_end_offset);
@@ -305,9 +301,8 @@ namespace ams::kern::init::loader {
         ttbr1_table.Map(virtual_base_address + rw_offset, bss_end_offset - rw_offset, base_address + rw_offset, KernelRwDataAttribute, g_initial_page_allocator);
 
         /* On 10.0.0+, Physically randomize the kernel region. */
-        if (kern::GetTargetFirmware() >= kern::TargetFirmware_10_0_0) {
+        if (kern::GetTargetFirmware() >= ams::TargetFirmware_10_0_0) {
             ttbr1_table.PhysicallyRandomize(virtual_base_address + rx_offset, bss_end_offset - rx_offset, true);
-            cpu::StoreEntireCacheForInit();
         }
 
         /* Clear kernel .bss. */
@@ -317,11 +312,13 @@ namespace ams::kern::init::loader {
         const Elf::Dyn *kernel_dynamic = reinterpret_cast<const Elf::Dyn *>(GetInteger(virtual_base_address) + dynamic_offset);
         Elf::ApplyRelocations(GetInteger(virtual_base_address), kernel_dynamic);
 
+        /* Call the kernel's init array functions. */
+        /* NOTE: The kernel does this after reprotecting .rodata, but we do it before. */
+        /* This allows our global constructors to edit .rodata, which is valuable for editing the SVC tables to support older firmwares' ABIs. */
+        Elf::CallInitArrayFuncs(GetInteger(virtual_base_address) + init_array_offset, GetInteger(virtual_base_address) + init_array_end_offset);
+
         /* Reprotect .rodata as R-- */
         ttbr1_table.Reprotect(virtual_base_address + ro_offset, ro_end_offset - ro_offset, KernelRwDataAttribute, KernelRoDataAttribute);
-
-        /* Call the kernel's init array functions. */
-        Elf::CallInitArrayFuncs(GetInteger(virtual_base_address) + init_array_offset, GetInteger(virtual_base_address) + init_array_end_offset);
 
         /* Return the difference between the random virtual base and the physical base. */
         return GetInteger(virtual_base_address) - base_address;
@@ -333,7 +330,7 @@ namespace ams::kern::init::loader {
 
     uintptr_t GetFinalPageAllocatorState() {
         g_initial_page_allocator.GetFinalState(std::addressof(g_final_page_allocator_state));
-        if (kern::GetTargetFirmware() >= kern::TargetFirmware_10_0_0) {
+        if (kern::GetTargetFirmware() >= ams::TargetFirmware_10_0_0) {
             return reinterpret_cast<uintptr_t>(std::addressof(g_final_page_allocator_state));
         } else {
             return g_final_page_allocator_state.next_address;

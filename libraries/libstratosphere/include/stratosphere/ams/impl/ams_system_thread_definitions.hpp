@@ -39,28 +39,32 @@ namespace ams::impl {
     AMS_DEFINE_SYSTEM_THREAD(21, pm, Main);
     AMS_DEFINE_SYSTEM_THREAD(21, pm, ProcessTrack);
 
+
     /* NCM. */
     AMS_DEFINE_SYSTEM_THREAD(21, ncm, MainWaitThreads);
     AMS_DEFINE_SYSTEM_THREAD(21, ncm, ContentManagerServerIpcSession);
     AMS_DEFINE_SYSTEM_THREAD(21, ncm, LocationResolverServerIpcSession);
 
     /* FS. */
-    AMS_DEFINE_SYSTEM_THREAD(16, fs, WorkerThreadPool);
-    AMS_DEFINE_SYSTEM_THREAD(17, fs, Main);
-    AMS_DEFINE_SYSTEM_THREAD(17, fs, WorkerRealTimeAccess);
-    AMS_DEFINE_SYSTEM_THREAD(18, fs, WorkerNormalPriorityAccess);
-    AMS_DEFINE_SYSTEM_THREAD(19, fs, WorkerLowPriorityAccess);
-    AMS_DEFINE_SYSTEM_THREAD(30, fs, WorkerBackgroundAccess);
-    AMS_DEFINE_SYSTEM_THREAD(30, fs, PatrolReader);
+    AMS_DEFINE_SYSTEM_THREAD(11, sdmmc, DeviceDetector);
+    AMS_DEFINE_SYSTEM_THREAD(16, fs,    WorkerThreadPool);
+    AMS_DEFINE_SYSTEM_THREAD(17, fs,    Main);
+    AMS_DEFINE_SYSTEM_THREAD(17, fs,    WorkerRealTimeAccess);
+    AMS_DEFINE_SYSTEM_THREAD(18, fs,    WorkerNormalPriorityAccess);
+    AMS_DEFINE_SYSTEM_THREAD(19, fs,    WorkerLowPriorityAccess);
+    AMS_DEFINE_SYSTEM_THREAD(30, fs,    WorkerBackgroundAccess);
+    AMS_DEFINE_SYSTEM_THREAD(30, fs,    PatrolReader);
 
     /* Boot. */
     AMS_DEFINE_SYSTEM_THREAD(-1, boot, Main);
 
     /* Mitm. */
-    AMS_DEFINE_SYSTEM_THREAD(-7, mitm,    InitializeThread);
-    AMS_DEFINE_SYSTEM_THREAD(-1, mitm_sf, QueryServerProcessThread);
-    AMS_DEFINE_SYSTEM_THREAD(16, mitm_fs, RomFileSystemInitializeThread);
-    AMS_DEFINE_SYSTEM_THREAD(21, mitm,    DebugThrowThread);
+    AMS_DEFINE_SYSTEM_THREAD(-7, mitm,            InitializeThread);
+    AMS_DEFINE_SYSTEM_THREAD(-1, mitm_sf,         QueryServerProcessThread);
+    AMS_DEFINE_SYSTEM_THREAD(16, mitm_fs,         RomFileSystemInitializeThread);
+    AMS_DEFINE_SYSTEM_THREAD(21, mitm,            DebugThrowThread);
+    AMS_DEFINE_SYSTEM_THREAD(21, mitm_sysupdater, IpcServer);
+    AMS_DEFINE_SYSTEM_THREAD(21, mitm_sysupdater, AsyncPrepareSdCardUpdateTask);
 
     /* boot2. */
     AMS_DEFINE_SYSTEM_THREAD(20, boot2, Main);
@@ -85,14 +89,21 @@ namespace ams::impl {
     /* ro. */
     AMS_DEFINE_SYSTEM_THREAD(16, ro, Main);
 
+    /* gpio. */
+    AMS_DEFINE_SYSTEM_THREAD(-12, gpio, InterruptHandler);
+
     /* bpc. */
     AMS_DEFINE_SYSTEM_THREAD(4, bpc, IpcServer);
+
+    /* powctl. */
+    AMS_DEFINE_SYSTEM_THREAD(9, powctl, InterruptHandler);
 
     /* hid. */
     AMS_DEFINE_SYSTEM_THREAD(-10, hid, IpcServer);
 
     /* ns.*/
     AMS_DEFINE_SYSTEM_THREAD(21, ns, ApplicationManagerIpcSession);
+    AMS_DEFINE_SYSTEM_THREAD(21, nssrv, AsyncPrepareCardUpdateTask);
 
     /* settings. */
     AMS_DEFINE_SYSTEM_THREAD(21, settings, Main);

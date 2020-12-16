@@ -15,42 +15,19 @@
  */
 #pragma once
 #include <vapours.hpp>
+#include <mesosphere/kern_build_config.hpp>
+#include <mesosphere/svc/kern_svc_results.hpp>
 
 namespace ams::kern {
 
     constexpr size_t PageSize = 4_KB;
 
-    enum TargetFirmware : u32 {
-        TargetFirmware_1_0_0  = ATMOSPHERE_TARGET_FIRMWARE_100,
-        TargetFirmware_2_0_0  = ATMOSPHERE_TARGET_FIRMWARE_200,
-        TargetFirmware_3_0_0  = ATMOSPHERE_TARGET_FIRMWARE_300,
-        TargetFirmware_4_0_0  = ATMOSPHERE_TARGET_FIRMWARE_400,
-        TargetFirmware_5_0_0  = ATMOSPHERE_TARGET_FIRMWARE_500,
-        TargetFirmware_6_0_0  = ATMOSPHERE_TARGET_FIRMWARE_600,
-        TargetFirmware_6_2_0  = ATMOSPHERE_TARGET_FIRMWARE_620,
-        TargetFirmware_7_0_0  = ATMOSPHERE_TARGET_FIRMWARE_700,
-        TargetFirmware_8_0_0  = ATMOSPHERE_TARGET_FIRMWARE_800,
-        TargetFirmware_8_1_0  = ATMOSPHERE_TARGET_FIRMWARE_810,
-        TargetFirmware_9_0_0  = ATMOSPHERE_TARGET_FIRMWARE_900,
-        TargetFirmware_9_1_0  = ATMOSPHERE_TARGET_FIRMWARE_910,
-        TargetFirmware_10_0_0 = ATMOSPHERE_TARGET_FIRMWARE_1000,
-    };
-
-    TargetFirmware GetTargetFirmware();
+#ifdef ATMOSPHERE_BOARD_NINTENDO_NX
+    ams::TargetFirmware GetTargetFirmware();
+#else
+    consteval ALWAYS_INLINE ams::TargetFirmware GetTargetFirmware() {
+        return ams::TargetFirmware_Current;
+    }
+#endif
 
 }
-
-#if 1 || defined(AMS_BUILD_FOR_AUDITING)
-#define MESOSPHERE_BUILD_FOR_AUDITING
-#endif
-
-#if defined(MESOSPHERE_BUILD_FOR_AUDITING) || defined(AMS_BUILD_FOR_DEBUGGING)
-#define MESOSPHERE_BUILD_FOR_DEBUGGING
-#endif
-
-#ifdef  MESOSPHERE_BUILD_FOR_DEBUGGING
-#define MESOSPHERE_ENABLE_ASSERTIONS
-#define MESOSPHERE_ENABLE_DEBUG_PRINT
-#endif
-
-#include <mesosphere/svc/kern_svc_results.hpp>

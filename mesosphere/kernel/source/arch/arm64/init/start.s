@@ -61,12 +61,14 @@ __metadata_kernel_layout:
     .error "Incorrect Mesosphere Metadata"
 .endif
 
+#ifdef ATMOSPHERE_BOARD_NINTENDO_NX
 .global     _ZN3ams4kern17GetTargetFirmwareEv
 .type       _ZN3ams4kern17GetTargetFirmwareEv, %function
 _ZN3ams4kern17GetTargetFirmwareEv:
     adr x0, __metadata_target_firmware
     ldr w0, [x0]
     ret
+#endif
 
 /* ams::kern::init::StartCore0(uintptr_t, uintptr_t) */
 .section    .crt0.text._ZN3ams4kern4init10StartCore0Emm, "ax", %progbits
@@ -94,6 +96,20 @@ core0_el2:
 core0_el1:
     bl _ZN3ams4kern4init19DisableMmuAndCachesEv
 
+#ifdef ATMOSPHERE_BOARD_NINTENDO_NX
+    /* Get the target firmware from exosphere. */
+    LOAD_IMMEDIATE_32(w0, 0xC3000004)
+    mov w1, #65000
+    smc #1
+    cmp x0, #0
+0:
+    b.ne 0b
+
+    /* Store the target firmware. */
+    adr x0, __metadata_target_firmware
+    str w1, [x0]
+#endif
+
     /* We want to invoke kernel loader. */
     adr x0, _start
     adr x1, __metadata_kernel_layout
@@ -102,14 +118,7 @@ core0_el1:
     LOAD_FROM_LABEL(x3, __metadata_kernelldr_offset)
     add x3, x0, x3
 
-    /* If kernelldr is ours, set its target firmware. */
-    ldr w4, [x3, #4]
-    LOAD_IMMEDIATE_32(w5, 0x30444C4D)
-    cmp w4, w5
-    b.ne 1f
-    LOAD_FROM_LABEL(x4, __metadata_target_firmware)
-    str w4, [x3, #8]
-1:
+    /* Invoke kernel loader. */
     blr x3
 
     /* At this point kernelldr has been invoked, and we are relocated at a random virtual address. */
@@ -218,6 +227,10 @@ _ZN3ams4kern4init16InvokeEntrypointEPKNS1_14KInitArgumentsE:
     /* Ensure that the exception vectors are setup. */
     bl _ZN3ams4kern4init26InitializeExceptionVectorsEv
 
+    /* Setup the exception stack in tpidr_el1. */
+    ldr x1, [x20, #0x58]
+    msr tpidr_el1, x1
+
     /* Jump to the entrypoint. */
     ldr x1, [x20, #0x40]
     ldr x0, [x20, #0x48]
@@ -236,6 +249,27 @@ _ZN3ams4kern4init16JumpFromEL2ToEL1Ev:
     bl _ZN3ams4kern4arch5arm643cpu32FlushEntireDataCacheWithoutStackEv
 
     /* Setup system registers for deprivileging. */
+
+    /* Check if we're on cortex A57 or A53. If we are, set ACTLR_EL2. */
+    mrs  x1, midr_el1
+
+    /* Is the manufacturer ID 'A' (ARM)? */
+    ubfx x2, x1, #0x18, #8
+    cmp x2, #0x41
+    b.ne 2f
+
+    /* Is the board ID Cortex-A57? */
+    ubfx x2, x1, #4, #0xC
+    mov x3, #0xD07
+    cmp x2, x3
+    b.eq 1f
+
+    /* Is the board ID Cortex-A53? */
+    mov x3, #0xD03
+    cmp x2, x3
+    b.ne 2f
+
+1:
     /* ACTLR_EL2: */
     /*  - CPUACTLR access control = 1 */
     /*  - CPUECTLR access control = 1 */
@@ -245,6 +279,7 @@ _ZN3ams4kern4init16JumpFromEL2ToEL1Ev:
     mov x0, #0x73
     msr actlr_el2, x0
 
+2:
     /* HCR_EL2: */
     /*  - RW = 1 (el1 is aarch64) */
     mov x0, #0x80000000
@@ -261,6 +296,14 @@ _ZN3ams4kern4init16JumpFromEL2ToEL1Ev:
     /*  - Manager access for all D<n> */
     mov x0, #0xFFFFFFFF
     msr dacr32_el2, x0
+
+    /* Set VPIDR_EL2 = MIDR_EL1 */
+    mrs x0, midr_el1
+    msr vpidr_el2, x0
+
+    /* SET VMPIDR_EL2 = MPIDR_EL1 */
+    mrs x0, mpidr_el1
+    msr vmpidr_el2, x0
 
     /* SPSR_EL2: */
     /*  - EL1h */

@@ -31,7 +31,8 @@ namespace ams::kern {
             for (size_t i = 0; i < util::size(this->limit_values); i++) {
                 this->limit_values[i]    = 0;
                 this->current_values[i]  = 0;
-                this->current_hints[i] = 0;
+                this->current_hints[i]   = 0;
+                this->peak_values[i]     = 0;
             }
         */
     }
@@ -62,6 +63,21 @@ namespace ams::kern {
         {
             KScopedLightLock lk(this->lock);
             value = this->current_values[which];
+            MESOSPHERE_ASSERT(value >= 0);
+            MESOSPHERE_ASSERT(this->current_values[which] <= this->limit_values[which]);
+            MESOSPHERE_ASSERT(this->current_hints[which]  <= this->current_values[which]);
+        }
+
+        return value;
+    }
+
+    s64 KResourceLimit::GetPeakValue(ams::svc::LimitableResource which) const {
+        MESOSPHERE_ASSERT_THIS();
+
+        s64 value;
+        {
+            KScopedLightLock lk(this->lock);
+            value = this->peak_values[which];
             MESOSPHERE_ASSERT(value >= 0);
             MESOSPHERE_ASSERT(this->current_values[which] <= this->limit_values[which]);
             MESOSPHERE_ASSERT(this->current_hints[which]  <= this->current_values[which]);
@@ -123,7 +139,8 @@ namespace ams::kern {
 
             if (this->current_values[which] + value <= this->limit_values[which]) {
                 this->current_values[which] += value;
-                this->current_hints[which] += value;
+                this->current_hints[which]  += value;
+                this->peak_values[which]    = std::max(this->peak_values[which], this->current_values[which]);
                 return true;
             }
 

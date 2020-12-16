@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "sm_utils.hpp"
 
 namespace ams::sm::mitm {
@@ -33,6 +34,12 @@ namespace ams::sm::mitm {
     Result DeclareFutureMitm(ServiceName name) {
         return impl::DoWithUserSession([&]() {
             return smAtmosphereMitmDeclareFuture(impl::ConvertName(name));
+        });
+    }
+
+    Result ClearFutureMitm(ServiceName name) {
+        return impl::DoWithUserSession([&]() {
+            return smAtmosphereMitmClearFuture(impl::ConvertName(name));
         });
     }
 

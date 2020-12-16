@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <stratosphere.hpp>
 #include "ldr_capabilities.hpp"
 #include "ldr_content_management.hpp"
 #include "ldr_development_manager.hpp"
@@ -54,11 +55,20 @@ namespace ams::ldr {
             R_UNLESS(npdm->magic == Npdm::Magic, ResultInvalidMeta());
 
             /* Validate flags. */
-            u32 mask = ~0x1F;
-            if (hos::GetVersion() < hos::Version_7_0_0) {
-                /* 7.0.0 added 0x10 as a valid bit to NPDM flags, so before that we only check 0xF. */
+            u32 mask;
+            if (hos::GetVersion() >= hos::Version_11_0_0) {
+                /* 11.0.0 added bit 5 = "DisableDeviceAddressSpaceMerge". */
+                mask = ~0x3F;
+            } else if (hos::GetVersion() >= hos::Version_7_0_0) {
+                /* 7.0.0 added bit 4 = "UseOptimizedMemory" */
+                mask = ~0x1F;
+            } else {
                 mask = ~0xF;
             }
+
+            /* We set the "DisableDeviceAddressSpaceMerge" bit on all versions, so be permissive with it. */
+            mask &= ~0x20;
+
             R_UNLESS(!(npdm->flags & mask), ResultInvalidMeta());
 
             /* Validate Acid extents. */
@@ -100,19 +110,13 @@ namespace ams::ldr {
         }
 
         const u8 *GetAcidSignatureModulus(u32 key_generation) {
-            AMS_ASSERT(key_generation <= fssystem::AcidSignatureKeyGenerationMax);
-            const u32 used_keygen = (key_generation % (fssystem::AcidSignatureKeyGenerationMax + 1));
-            if (IsDevelopmentForAcidSignatureCheck()) {
-                return fssystem::AcidSignatureKeyModulusDev[used_keygen];
-            } else {
-                return fssystem::AcidSignatureKeyModulusProd[used_keygen];
-            }
+            return fssystem::GetAcidSignatureKeyModulus(!IsDevelopmentForAcidSignatureCheck(), key_generation);
         }
 
         Result ValidateAcidSignature(Meta *meta) {
             /* Loader did not check signatures prior to 10.0.0. */
             if (hos::GetVersion() < hos::Version_10_0_0) {
-                meta->is_signed = false;
+                meta->check_verification_data = false;
                 return ResultSuccess();
             }
 
@@ -121,14 +125,14 @@ namespace ams::ldr {
             const size_t sig_size = sizeof(meta->acid->signature);
             const u8 *mod         = GetAcidSignatureModulus(meta->npdm->signature_key_generation);
             const size_t mod_size = fssystem::AcidSignatureKeyModulusSize;
-            const u8 *exp         = fssystem::AcidSignatureKeyExponent;
-            const size_t exp_size = fssystem::AcidSignatureKeyExponentSize;
+            const u8 *exp         = fssystem::GetAcidSignatureKeyPublicExponent();
+            const size_t exp_size = fssystem::AcidSignatureKeyPublicExponentSize;
             const u8 *msg         = meta->acid->modulus;
             const size_t msg_size = meta->acid->size;
             const bool is_signature_valid = crypto::VerifyRsa2048PssSha256(sig, sig_size, mod, mod_size, exp, exp_size, msg, msg_size);
             R_UNLESS(is_signature_valid || !IsEnabledProgramVerification(), ResultInvalidAcidSignature());
 
-            meta->is_signed = is_signature_valid;
+            meta->check_verification_data = is_signature_valid;
             return ResultSuccess();
         }
 
@@ -203,6 +207,8 @@ namespace ams::ldr {
         if (status.IsHbl()) {
             if (R_SUCCEEDED(fs::OpenFile(std::addressof(file), SdOrBaseMetaPath, fs::OpenMode_Read))) {
                 ON_SCOPE_EXIT { fs::CloseFile(file); };
+
+
                 if (R_SUCCEEDED(LoadMetaFromFile(file, &g_original_meta_cache))) {
                     Meta *o_meta = &g_original_meta_cache.meta;
 
@@ -217,6 +223,30 @@ namespace ams::ldr {
                     caps::SetProgramInfoFlags(program_info_flags, meta->aci_kac, meta->aci->kac_size);
                 }
             }
+
+            /* Perform address space override. */
+            if (status.HasOverrideAddressSpace()) {
+                /* Clear the existing address space. */
+                meta->npdm->flags &= ~Npdm::MetaFlag_AddressSpaceTypeMask;
+
+                /* Set the new address space flag. */
+                switch (status.GetOverrideAddressSpaceFlags()) {
+                    case cfg::impl::OverrideStatusFlag_AddressSpace32Bit:             meta->npdm->flags |= (Npdm::AddressSpaceType_32Bit)             << Npdm::MetaFlag_AddressSpaceTypeShift; break;
+                    case cfg::impl::OverrideStatusFlag_AddressSpace64BitDeprecated:   meta->npdm->flags |= (Npdm::AddressSpaceType_64BitDeprecated)   << Npdm::MetaFlag_AddressSpaceTypeShift; break;
+                    case cfg::impl::OverrideStatusFlag_AddressSpace32BitWithoutAlias: meta->npdm->flags |= (Npdm::AddressSpaceType_32BitWithoutAlias) << Npdm::MetaFlag_AddressSpaceTypeShift; break;
+                    case cfg::impl::OverrideStatusFlag_AddressSpace64Bit:             meta->npdm->flags |= (Npdm::AddressSpaceType_64Bit)             << Npdm::MetaFlag_AddressSpaceTypeShift; break;
+                    AMS_UNREACHABLE_DEFAULT_CASE();
+                }
+            }
+
+            /* When hbl is applet, adjust main thread priority. */
+            if ((caps::GetProgramInfoFlags(meta->aci_kac, meta->aci->kac_size) & ProgramInfoFlag_ApplicationTypeMask) == ProgramInfoFlag_Applet) {
+                constexpr auto HblMainThreadPriorityApplication = 44;
+                constexpr auto HblMainThreadPriorityApplet      = 40;
+                if (meta->npdm->main_thread_priority == HblMainThreadPriorityApplication) {
+                    meta->npdm->main_thread_priority = HblMainThreadPriorityApplet;
+                }
+            }
         } else if (hos::GetVersion() >= hos::Version_10_0_0) {
             /* If storage id is none, there is no base code filesystem, and thus it is impossible for us to validate. */
             /* However, if we're an application, we are guaranteed a base code filesystem. */
@@ -225,10 +255,15 @@ namespace ams::ldr {
                 ON_SCOPE_EXIT { fs::CloseFile(file); };
                 R_TRY(LoadMetaFromFile(file, &g_original_meta_cache));
                 R_TRY(ValidateAcidSignature(&g_original_meta_cache.meta));
-                meta->modulus   = g_original_meta_cache.meta.modulus;
-                meta->is_signed = g_original_meta_cache.meta.is_signed;
+                meta->modulus                 = g_original_meta_cache.meta.modulus;
+                meta->check_verification_data = g_original_meta_cache.meta.check_verification_data;
             }
         }
+
+        /* Pre-process the capabilities. */
+        /* This is used to e.g. avoid passing memory region descriptor to older kernels. */
+        caps::ProcessCapabilities(meta->acid_kac, meta->acid->kac_size);
+        caps::ProcessCapabilities(meta->aci_kac, meta->aci->kac_size);
 
         /* Set output. */
         g_cached_program_id = loc.program_id;

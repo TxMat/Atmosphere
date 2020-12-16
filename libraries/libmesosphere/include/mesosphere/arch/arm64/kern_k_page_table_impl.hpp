@@ -29,6 +29,11 @@ namespace ams::kern::arch::arm64 {
             struct TraversalEntry {
                 KPhysicalAddress phys_addr;
                 size_t block_size;
+                u8 sw_reserved_bits;
+
+                constexpr bool IsHeadMergeDisabled() const { return (this->sw_reserved_bits & PageTableEntry::SoftwareReservedBit_DisableMergeHead) != 0; }
+                constexpr bool IsHeadAndBodyMergeDisabled() const { return (this->sw_reserved_bits & PageTableEntry::SoftwareReservedBit_DisableMergeHeadAndBody) != 0; }
+                constexpr bool IsTailMergeDisabled() const { return (this->sw_reserved_bits & PageTableEntry::SoftwareReservedBit_DisableMergeHeadTail) != 0; }
             };
 
             struct TraversalContext {
@@ -105,6 +110,9 @@ namespace ams::kern::arch::arm64 {
             NOINLINE void InitializeForKernel(void *tb, KVirtualAddress start, KVirtualAddress end);
             NOINLINE void InitializeForProcess(void *tb, KVirtualAddress start, KVirtualAddress end);
             L1PageTableEntry *Finalize();
+
+            void Dump(uintptr_t start, size_t size) const;
+            size_t CountPageTables() const;
 
             bool BeginTraversal(TraversalEntry *out_entry, TraversalContext *out_context, KProcessAddress address) const;
             bool ContinueTraversal(TraversalEntry *out_entry, TraversalContext *context) const;

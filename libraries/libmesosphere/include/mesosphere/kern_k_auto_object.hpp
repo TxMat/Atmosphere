@@ -127,6 +127,7 @@ namespace ams::kern {
                 u32 cur_ref_count = this->ref_count.load(std::memory_order_acquire);
                 do {
                     if (AMS_UNLIKELY(cur_ref_count == 0)) {
+                        MESOSPHERE_AUDIT(cur_ref_count != 0);
                         return false;
                     }
                     MESOSPHERE_ABORT_UNLESS(cur_ref_count < cur_ref_count + 1);
@@ -177,18 +178,17 @@ namespace ams::kern {
             }
     };
 
-    template<typename T>
+    template<typename T> requires std::derived_from<T, KAutoObject>
     class KScopedAutoObject {
-        static_assert(std::is_base_of<KAutoObject, T>::value);
         NON_COPYABLE(KScopedAutoObject);
+        private:
+            template<typename U>
+            friend class KScopedAutoObject;
         private:
             T *obj;
         private:
             constexpr ALWAYS_INLINE void Swap(KScopedAutoObject &rhs) {
-                /* TODO: C++20 constexpr std::swap */
-                T *tmp = rhs.obj;
-                rhs.obj = this->obj;
-                this->obj = tmp;
+                std::swap(this->obj, rhs.obj);
             }
         public:
             constexpr ALWAYS_INLINE KScopedAutoObject() : obj(nullptr) { /* ... */ }
@@ -198,19 +198,35 @@ namespace ams::kern {
                 }
             }
 
-            ALWAYS_INLINE ~KScopedAutoObject() {
+            ~KScopedAutoObject() {
                 if (this->obj != nullptr) {
                     this->obj->Close();
                 }
                 this->obj = nullptr;
             }
 
-            constexpr ALWAYS_INLINE KScopedAutoObject(KScopedAutoObject &&rhs) {
-                this->obj = rhs.obj;
-                rhs.obj = nullptr;
+            template<typename U> requires (std::derived_from<T, U> || std::derived_from<U, T>)
+            constexpr KScopedAutoObject(KScopedAutoObject<U> &&rhs) {
+                if constexpr (std::derived_from<U, T>) {
+                    /* Upcast. */
+                    this->obj = rhs.obj;
+                    rhs.obj = nullptr;
+                } else {
+                    /* Downcast. */
+                    T *derived = nullptr;
+                    if (rhs.obj != nullptr) {
+                        derived = rhs.obj->template DynamicCast<T *>();
+                        if (derived == nullptr) {
+                            rhs.obj->Close();
+                        }
+                    }
+
+                    this->obj = derived;
+                    rhs.obj = nullptr;
+                }
             }
 
-            constexpr ALWAYS_INLINE KScopedAutoObject &operator=(KScopedAutoObject &&rhs) {
+            constexpr ALWAYS_INLINE KScopedAutoObject<T> &operator=(KScopedAutoObject<T> &&rhs) {
                 rhs.Swap(*this);
                 return *this;
             }
@@ -223,6 +239,8 @@ namespace ams::kern {
             }
 
             constexpr ALWAYS_INLINE T *GetPointerUnsafe() { return this->obj; }
+
+            constexpr ALWAYS_INLINE T *ReleasePointerUnsafe() { T *ret = this->obj; this->obj = nullptr; return ret; }
 
             constexpr ALWAYS_INLINE bool IsNull() const { return this->obj == nullptr; }
             constexpr ALWAYS_INLINE bool IsNotNull() const { return this->obj != nullptr; }
