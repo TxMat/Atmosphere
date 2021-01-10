@@ -1,4 +1,34 @@
 # Changelog
+## 0.17.0
++ fusee was heavily rewritten in order to add support for Mariko hardware.
+  + **Please Note**: Mariko hardware currently has no (and may not ever have any) software exploits; fusee works when loaded from bootloader context with the right keys in the security engine. No means of getting the system into this state is provided.
++ An issue was fixed in the way shutdown was performed on Erista hardware.
+  + This fixes an issue that caused OFW to black screen on boot after power off from atmosphere without first doing a reboot.
+  + This also substantially improves power drain when the system is shut off; consoles powered off from Atmosphere should now drain battery at the same reduced rate as original firmware.
++ A number of minor changes were made, including:
+  + A number of inconsistencies in the build system were fixed.
+    + Fow those building atmosphère at home, the `boot` sysmodule will no longer rebuild every time make is invoked.
+    + This substantially improves build times during development iteration.
+  + `sm` was updated to more accurately reflect how official code manages request deferral.
+  + `mesosphère` was updated to more accurately reflect official kernel management of the trace buffer.
+  + `mesosphère` was updated to improve kernel loader's logic by taking advantage of the assumption that we only boot our kernel, not Nintendo's.
++ As it has been a few months with zero reported issues, `mesosphère` is now opt-out.
+    + Users who wish to begin using or continue using mesosphere should use the standard/cool kids zip ("atmosphere-").
+    + Users who wish to opt-out of mesosphere should download and extract the opt-out zip ("atmosphere-WITHOUT_MESOSPHERE-").
++ Several issues were fixed, and usability and stability were improved.
+## 0.16.2
++ Atmosphère release zips no longer bundle BCT.ini, instead relying on defaults in code.
+  + This means atmosphere updates should no longer overwrite any user configuration at all.
+  + If you wish to modify BCT.ini config, copy the template from /config_templates/ as with other configuration.
++ `pgl` and `creport` were further updated to reflect differences in official behavior in 11.0.0.
++ An issue was fixed that caused creport to be launched multiple times on process crash.
+  + This fixes the "duplicate reports" issue that sometimes plagued people.
++ A new system setting (`atmosphere!enable_am_debug_mode`) configuring am to use debug mode.
+  + If you are not a developer or don't see a clear use for this, leave it configured to the default (off).
++ Reboot to payload NRO was updated to fix support with certain payloads.
++ Support was fixed for atmosphere's extension to support homebrew use of new (8.0.0+) kernel mappings.
+  + In particular, when running tracing debug builds of `mesosphère`, hbloader now has access to the kernel trace buffer.
++ Several issues were fixed, and usability and stability were improved.
 ## 0.16.1
 + Support was added for 11.0.1.
   + `mesosphère` was updated to reflect the latest official kernel behavior.
@@ -7,7 +37,7 @@
 + `fs` logic was refactored and cleaned up to reflect some newer sysmodule behavioral and structural changes.
 + `exosphère` was updated to allow dynamic control of what uart port is used for logging.
   + This can be controlled by editing the `log_port`, `log_baud_rate`, and `log_inverted` fields in `exosphere.ini`.
-+ `mesosphère` was updated to improve debugging capabilities ().
++ `mesosphère` was updated to improve debugging capabilities.
   + This is still a work in progress, but developers may be interested.
 + A bug was fixed that caused `fatal` to fatal error if the fatal process was already being debugged.
 + Several issues were fixed, and usability and stability were improved.
